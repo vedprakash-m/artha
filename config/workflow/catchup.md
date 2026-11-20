@@ -3,17 +3,12 @@
 Loaded only for a Catch-up via §R. The incumbent retains authority over Domain State Files, Goals and
 Open Items unless a specific approved transfer changes their writer.
 
-After Step 7, run the isolated core comparison with
-`python3 scripts/catchup_core/cli.py catchup --shadow --json`.
-Exit 40 pauses extraction: answer the requests and resume the same ID with `--responses -`.
-The v2 bundle includes its evaluation cohort. For measured/authoritative extraction, responses also report the
-actual `model_identity` (provider, model, revision, retention_policy) and the matching `cohort` beside `responses`.
-Do not invent an unavailable model revision. Anonymous answers remain usable for shadow comparison but do not
-establish measured release evidence; host isolation still needs its recorded acceptance.
-The comparison never publishes or writes canonical State Files. A separate authoritative core run may
-publish only on the designated authority host with a valid release. The full profile requires a consented
-live full-v4 scorecard; the approved slice uses a signed slice waiver instead and retains its other required
-gates. This workflow does not enable cutover or approve external actions. `brief everything` uses `--format deep`.
+In Light mode, do not run `catchup --shadow`; the incumbent file workflow is the active Catch-up and must keep
+the one-laptop handoff and write-refusal rules. Engine `health`, `mcp` and shadow commands are explicit diagnostics
+only; an explicit shadow run never publishes, archives or writes canonical State Files. In authoritative mode, retain
+the designated authority host, valid release, full-v4 scorecard or approved signed slice waiver rules from
+`docs/catchup-core.md`.
+This workflow does not enable cutover or approve external actions. `brief everything` uses `--format deep`.
 
 Core commitment review supports `complete open_item:<id>` with the existing exact preview/apply-token flow.
 Only the explicit accountable owner can confirm; `--reopen` withdraws current confirmation. Authored State Files
@@ -63,7 +58,9 @@ Steps 8o–8r cross-domain analysis) are defined in that overlay. On Mac: skip s
 python3 scripts/vault.py read <domain>
 ```
 To access encrypted domain state without leaving decrypted plaintext files on disk, use in-memory decryption (`python3 scripts/vault.py read <domain>` or programmatically `from foundation import get_age_vault; text = get_age_vault().read(domain)`).
-Batch decryption to disk (`python3 scripts/vault.py decrypt --offline-edit`) is refused without that flag, and is only for explicit offline file editing. Change a domain with `python3 scripts/vault.py write <domain>` (new content on stdin).
+Bulk decryption in the synced workspace is refused. Change a domain with
+`vault.py read <domain> --json` followed by
+`vault.py write <domain> --expected-revision <token>` (new content on stdin).
 
 ### Step 1b — Pull To Do completion status
 If `config/artha_config.yaml` exists with `todo_lists:` and `.tokens/msgraph-token.json` is present:

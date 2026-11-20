@@ -312,10 +312,10 @@ temporary is removed on success or failure. This does not change legacy bulk-dec
   view is available through MCP `goals` with `{"weekly": true}`. Authored next actions remain visible beside metrics.
   Other metric histories, leading-indicator links and broader Sprint intelligence remain completion work.
 
-* `brief` runs the incumbent workflow and then `cli.py catchup --shadow --json` as a comparison. The incumbent
+* In Light mode, `brief` runs the incumbent file workflow and does not start the Engine shadow command. When an
+  explicit shadow comparison is requested, it never publishes or writes canonical State Files. The incumbent
   retains record types without an approved transfer; follow the Open Items fence in `config/workflow/catchup.md`.
-  An authoritative core run is separate and release-gated. `--format flash|standard|deep|digest` changes what is
-  shown; coverage, gaps and `next check by` are always shown.
+  An authoritative core run remains separate and release-gated.
 * `health` lists every capability as `disabled`, `not configured`, `unknown` (configured, never run), `last succeeded`,
   `degraded` or `not implemented`, and whether it is `measured` (needs a verified release scorecard).
   `docs/capability-register.md` and `docs/spec-manifest.json` are generated (`tools/gen_capability_register.py`) and

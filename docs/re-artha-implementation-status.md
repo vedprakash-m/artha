@@ -1,5 +1,13 @@
 # re-artha implementation status — 2026-11-18
 
+## Light Artha engineering complete; switch held — 2026-11-19
+
+File-based operation on either laptop (`specs/light-artha.md` v0.5) is implemented and validated on synthetic evidence:
+handoff manifest, conflict guard, CAS writers, refusal marker, restore and hygiene fixes (see `CHANGELOG.md` and
+`specs/artha-tech-spec.md` §43). `cutover` is still `true`; nothing live was changed. Held: the sync lab on both laptops,
+the Windows checklist, owner review of the allowlist and S0b findings (D-08, D-09), the switch and operational acceptance.
+Known limits: offline concurrent writes are detected best-effort; five writers outside the allowlist still publish directly.
+
 ## Refix specification closed — 2026-11-19
 
 Closed with owner-disposed exceptions; archived (owner-local). Engineering: **Done**. Operational acceptance: moved to the

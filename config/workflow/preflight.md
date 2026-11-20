@@ -64,16 +64,17 @@ Parse the JSON output. If `capabilities.filesystem_writable: false`, activate **
 **0b — Preflight gate:**
 ```bash
 # Normal (local Mac/Linux):
-python scripts/preflight.py
+python scripts/preflight.py --handoff-check
 
 # Read-only environment (VM — after detect_environment shows fs_writable: false):
-python scripts/preflight.py --advisory
+python scripts/preflight.py --handoff-check --advisory
 ```
 - Exit 0 = all P0 checks pass → proceed
 - Exit 0 (advisory) = P0 advisories logged, proceed with degraded catch-up
 - Exit 1 = P0 check failed → halt: `⛔ Pre-flight failed: [check] — [error]. Fix before retrying.`
 - Exit 3 = cold start (no user_profile.yaml) → route to first-run experience
-- P1 warnings do NOT block — log to briefing footer
+- P1 handoff warnings switch Catch-up to read-only until the owner confirms the one-laptop handoff.
+- Other P1 warnings do NOT block — log them to the briefing footer.
 - Log gate result to `state/health-check.md` → `preflight_runs:`
 
 **In read-only mode:** List each advisory in the briefing header:

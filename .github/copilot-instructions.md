@@ -77,4 +77,6 @@ Retained rules below apply to components defining these TypeScript paths/tools. 
 
 Success: fewer unnecessary diffs/rewrites and clarifications before implementation rather than after mistakes.
 
-**Two machines, one checkout:** check `git status` before editing; never touch the other machine's uncommitted changes; commit and push your own work promptly; never run Catch-ups or vault encrypt/decrypt on both machines at once (see `config/workflow/development.md`).
+**Two machines, one checkout:** check `git status` before editing; never touch the other machine's uncommitted
+changes. Light mode uses one active writer and an owner-attested `handoff.py` handoff; never infer remote quiescence
+from local file visibility. See `config/workflow/development.md`.

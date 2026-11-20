@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — Light Artha file-mode engineering, 2026-11-19
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Implemented `specs/light-artha.md` (engineering): owner-attested one-laptop handoff (`handoff.py seal|verify`, owner terminal, 7-day window), target-anchored conflict detection (device-name suffixes, manifest names, unknown remote host), fail-closed CAS writers with refusal marker and documented exit codes (committed 0, refused 20, uncertain 30), machine-local refusal gating of `last_catch_up`, path-addressed snapshots and `state_restore.py`, a 44-file Markdown allowlist, in-memory sensitive-state access, bulk decrypt refused in synced roots, foreign-host session marker protection with one host identity, machine-local locks, checkpoint and sentinel, and Light-mode routing. Review fixes: one cutover reader (preflight no longer returns NO-GO under `cutover: true`), owner-only seal/clear/restore, planning, memory, content-stage and iMessage writers migrated, five unmigrated writers kept off the allowlist, hints no longer point at the refused decrypt. `cutover` is unchanged; the live switch, S0a, Windows checks and owner acceptance remain Held. | `scripts/lib/{state_writer,state_snapshot,state_targets,sync_conflicts,light_mode,write_refusals}.py`, `scripts/{handoff,state_restore,write_refusals,vault,tool_guard,pipeline,health_check_writer,todo_sync,goals_writer,planning_signals,export_hermes_context}.py`, `scripts/catchup_core/{vault,cli}.py`, `scripts/preflight/*`, agents and skills writers, `config/light_mode.yaml`, `config/state_registry.yaml`, workflow and router docs, `docs/light-artha-second-laptop.md`, `docs/sync-conflicts.md`, `specs/artha-tech-spec.md` §43, tests (`test_light_*`, `test_handoff`, `test_sync_conflicts`, `test_write_refusals`, `test_state_restore`, `test_light_kill`), generated registers and baselines | Core 5,597 passed / 411 skipped (88.21%); harness 1,778 passed / 130 skipped; non-core 6,200 passed / 83 skipped; ruff, mypy, import, hygiene, write lint (259), generated registers, prompt lint and privacy scan clean; core and harness diff-coverage gates passed; synthetic UAT SC2-SC4 met. No live OneDrive, Windows or operational acceptance is claimed. |
+
 ### Changed — Refix Artha closed; narrowed `home` live release, 2026-11-19
 
 - Closed the refix specification with owner-disposed exceptions; remaining live work moved to a follow-on spec.

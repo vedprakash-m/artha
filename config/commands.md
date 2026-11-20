@@ -31,9 +31,10 @@ Equivalent natural language: "catch me up", "morning briefing", "SITREP", "what 
 
 Execution:
 ```bash
-python3 scripts/pipeline.py        # authoritative (incumbent)
-python3 scripts/catchup_core/cli.py catchup --shadow --json   # core comparison; authoritative only after cutover
+python3 scripts/preflight.py --handoff-check
+python3 scripts/pipeline.py
 ```
+In Light mode, do not run the Engine shadow command automatically. `catchup_core` diagnostics remain explicit.
 
 Sub-commands:
 - `/brief flash` — force flash format (§8.8) regardless of gap (`--format flash`)

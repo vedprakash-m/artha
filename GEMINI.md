@@ -17,7 +17,7 @@ Do NOT require a `/` prefix — bare words are the primary invocation form.
 
 | User says (examples) | Route to | Action |
 |---------------------|----------|--------|
-| `brief`, `catch me up`, `morning briefing`, `SITREP` | **brief** | Run `python scripts/pipeline.py`, read state files, produce briefing; then run the core in shadow: `python3 scripts/catchup_core/cli.py catchup --shadow --json` (authoritative only after a signed cutover, re-artha §12.6; authoritative runs use `cd scripts && PYTHONPATH=. python3 -m catchup_core.cli catchup --host <authority_host> ...` (the script form is also safe since the 2026-10-31 CLI-SHADOW fix); extraction requests (exit 40) must be answered by claude-sonnet-5-5, the pinned extractor — any other model hands them to a Sonnet subagent and never answers itself) |
+| `brief`, `catch me up`, `morning briefing`, `SITREP` | **brief** | Run the file-based Catch-up. In Light mode do not run the Engine shadow command; Engine diagnostics remain explicit. |
 | `work`, `what's happening at work`, `work briefing` | **work** | Read all files in `state/work/`, produce work briefing |
 | `items`, `what's open`, `what's overdue`, `action items` | **items** | Read `state/open_items.md`, display action items |
 | `goals`, `how are my goals`, `goal progress`, `sprint` | **goals** | Read `state/goals.md`, display goal progress |
@@ -67,7 +67,7 @@ services, then synthesize it into actionable intelligence.
 These are NOT built-in CLI commands — they are Artha workflow triggers
 defined in `config/Artha.md`. Execute them exactly as documented in that file.
 
-**Two machines, one checkout:** check `git status` before editing; never touch the other machine's uncommitted changes; commit and push your own work promptly; never run Catch-ups or vault encrypt/decrypt on both machines at once (see `config/workflow/development.md`).
+**Two machines, one checkout:** check `git status` before editing; never touch the other machine's uncommitted changes; commit your own work promptly and keep commits local unless the owner directs a push; Light mode uses one active writer and an owner-attested `handoff.py` handoff, and local file visibility never proves the other laptop has stopped (see `config/workflow/development.md`).
 
 **Work OS note:** `work` commands are a separate surface from personal
 commands. They read only from `state/work/` and never access personal state.

@@ -191,15 +191,10 @@ Every **factual claim** in briefing prose MUST carry one of these inline tokens 
 
 **Triggers:** "catch me up", "what did I miss", "morning briefing", "SITREP", "run catch-up", or `/catch-up` / `brief`
 
-**Catch-up core (re-artha §6.3, §12.6):** the incumbent retains record types without an approved authority transfer.
-After Step 7 run the core in shadow and report its coverage/Alerts as a comparison:
-```bash
-python3 scripts/catchup_core/cli.py catchup --shadow --json
-```
-Exit 40 means extraction is paused: answer each request's prompt (JSON only) and resume with `--id <ID> --responses -`
-(see `docs/catchup-core.md`). A shadow run never publishes, archives or writes State Files. A separate authoritative run
-requires the designated authority host and a valid release; the approved slice uses its signed waiver instead of the
-full-v4 scorecard and retains its other gates. Follow the Open Items ownership fence in `config/workflow/catchup.md`.
+**Catch-up Engine boundary:** report the effective mode before running. In Light mode, do not start shadow or
+authoritative Engine commands as part of `brief`; the incumbent file-based workflow is the only active Catch-up.
+Engine `health`, `mcp` and shadow commands are explicit diagnostics, not automatic steps. In authoritative mode,
+retain the signed release, authority-host and response-handling rules in `docs/catchup-core.md`.
 `show everything` / `brief:everything` runs the deep Briefing and retains overflowed Open Items and State entries.
 
 > **Composable modules:** For customization and phase-level documentation,

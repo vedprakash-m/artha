@@ -20,7 +20,8 @@
 ## Two machines, one synced checkout
 
 The Mac and the Windows laptop share this working tree through OneDrive. Before editing, run `git status` and
-look at recently modified files; never edit, stage or reformat another machine's uncommitted changes, and do not
-start a commit or re-sign while the other machine has an active session in the same files. Commit and push your
-own finished work promptly so the other machine sees a clean tree. Never run two Catch-ups (or `vault.py` encrypt/
-decrypt) on both machines at once: state files and the vault are shared.
+look at recently modified files; never edit, stage or reformat another machine's uncommitted changes. Use
+`handoff.py seal --owner-confirmed` only after OneDrive reports up to date on the outgoing laptop, then
+`preflight.py --handoff-check` on the incoming laptop. The check cannot prove that an offline laptop has no pending
+upload, so one laptop remains the supported writer. Keep commits local unless the owner separately directs a push.
+Never run two Catch-ups or two vault/encrypt operations at once.

@@ -7191,6 +7191,29 @@ def check_work_health_kusto_auth() -> CheckResult:
 
 ---
 
+## 43. Light mode: file-based operation on either laptop *(2026-11-19)*
+
+Light mode runs `brief`, `items`, `goals` and `domain` from State Files with the authoritative Engine off
+(`cutover: false`), on whichever laptop has the OneDrive checkout. One laptop writes at a time. Feature spec:
+`specs/light-artha.md`. Engine effective state is `file.cutover is True and ARTHA_CUTOVER != "0"`
+(`lib/light_mode.py`: `configured_cutover`, `effective_cutover`, `describe_cutover`). Environment `1` never enables it.
+
+| Component | Role |
+|---|---|
+| `scripts/handoff.py` | `seal` (owner terminal only; writes `state/.handoff.json`, SHA-256 of each allowlisted file; refuses on conflict copies or uninspected write refusals) and `verify` (compares this laptop's files; local acceptance record per manifest revision; manifests older than 7 days are unverified). Cannot prove the other laptop has nothing left to upload. |
+| `scripts/lib/sync_conflicts.py` | Target-anchored conflict-copy detection: `<stem>-<DEVICE>[-n].<ext>`, `<name>.md-<DEVICE>.age`, ` (n)`, `-conflict`; device names have an uppercase letter; the local and sealing host names are matched exactly; a scan error is unknown, never clean. |
+| `scripts/lib/state_targets.py`, `config/light_mode.yaml` | Registered State File paths and the Markdown allowlist for Light-mode writes and handoff. |
+| `lib/state_writer.write` / `write_current`, `catchup_core.vault.AgeVault.write` | Writers: mandatory token, conflict check before and after publication, atomic publish, readback. Outcomes: committed 0, refused 20, uncertain 30. A conflict copy seen after publication is reported as uncertain. |
+| `scripts/lib/write_refusals.py`, `scripts/write_refusals.py` | Machine-local `~/.artha-local/write-refusals.json`; `health_check_writer` will not advance `last_catch_up` while it is non-empty. `clear` needs an owner terminal. |
+| `scripts/state_restore.py` | `list`, `show`, `apply` (owner terminal) of a previous revision through the normal writer; corrupt current ciphertext is preserved under `~/.artha-local/state-restore-quarantine/` first. |
+| `scripts/vault.py` | Bulk `decrypt` is refused inside a cloud-synced workspace; `read --json` / `write --expected-revision`; `read-file` (owner terminal); foreign-host session markers are never probed or changed. |
+| `scripts/tool_guard.py` | Warns on native writes to allowlisted files beside a conflict copy; refuses them when Light mode is effective and the handoff is unverified; denies `handoff.py seal`, `write_refusals.py clear`, `state_restore.py apply` to agents. |
+| `scripts/preflight.py --handoff-check` | Reports effective mode and handoff result. An unverified handoff is a P1: read-only use, not a NO-GO. |
+
+Limits: offline concurrent writes are detected best-effort, not prevented; native agent edits get only the handoff
+and conflict check; writers outside the allowlist (`pr_manager`, `ai_trend_radar`, `home_intelligence`,
+`home_device_monitor`, `career_state`) still publish directly; there is no reversible Engine rollback.
+
 ## 18. Revision History
 
 | Version | Changes |

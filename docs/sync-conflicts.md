@@ -1,130 +1,70 @@
-# Artha — OneDrive Sync Conflict Resolution Protocol
+# Artha Light mode: OneDrive conflict runbook
 
-> **Status**: Active — operational runbook  
-> **Created**: 2026-04-14 (DEBT-005)  
-> **Applies to**: All `state/*.md` files synced via OneDrive across multiple machines
+Status: active for file-based operation on one active laptop at a time.
 
----
+OneDrive may preserve divergent edits as a sibling file, but that behavior is not
+guaranteed. Local checks detect visible copies; the owner-attested handoff remains
+the primary protection.
 
-## What is a Sync Conflict?
+## Before a handoff
 
-When two machines write to the same state file while one is offline (or before OneDrive
-has synced the latest version), OneDrive creates a **conflict copy** alongside the
-original.
+1. Finish the session and stop scheduled/background Artha writers on the outgoing laptop.
+2. Wait until OneDrive reports that the folder is up to date.
+3. Run:
+   ```bash
+   python3 scripts/handoff.py seal --owner-confirmed
+   ```
+4. Do not claim a handoff when the command is refused or reports a conflict.
 
-Common conflict copy filename patterns:
-- `state/finance-DESKTOP-WORKPC.md` — machine-name suffix (Windows)
-- `state/health (1).md` — numbered copy
-- `state/immigration-conflict.md` — explicit conflict tag
-- `state/goals-LAPTOP-HOME.md` — laptop-name suffix
-
-Artha's preflight check (`python scripts/preflight.py`) detects these automatically
-and emits a P1 WARNING.
-
----
-
-## Step-by-Step Resolution Protocol
-
-### 1. Identify both files
+On the incoming laptop:
 
 ```bash
-# List all conflict copies in state/
-ls state/ | grep -E '\-conflict|\-DESKTOP|\-LAPTOP| \([0-9]\)|\([0-9]+\)'
-
-# Or run preflight to get a formatted list:
-python scripts/preflight.py
+python3 scripts/preflight.py --handoff-check
+python3 scripts/handoff.py verify
 ```
 
-### 2. Diff the two files
+`verified` means only that this laptop's visible files match the sealed manifest. It
+does not prove that an offline laptop has no pending upload.
 
-```bash
-# Example: finance.md vs finance-DESKTOP-PC.md
-diff state/finance.md "state/finance-DESKTOP-PC.md"
-```
+## When a conflict exists
 
-Look for differences in:
-- `updated_at:` frontmatter field — **keep the file with the later timestamp**
-- Any factual changes (new entries, balance updates, status changes)
+Do not select a winner from `updated_at`, filename, or "later modified" alone.
 
-### 3. Determine the winner
+1. Stop writers on both laptops.
+2. Run `preflight --handoff-check`; record the exact target and conflict-copy names.
+3. Preserve the original and conflict copy outside the synced tree:
+   ```bash
+   cp "state/target.md" ~/.artha-local/conflict-quarantine/
+   cp "state/target-HOST.md" ~/.artha-local/conflict-quarantine/
+   ```
+   On Windows, use the equivalent owner-private copy into the local Artha directory.
+4. For encrypted files, inspect with `vault.py read <domain>` only. Do not decrypt
+   a conflict copy to a plaintext file in OneDrive or paste sensitive content into a
+   normal agent transcript.
+5. Review the record-level differences. Choose no change, keep the original, keep
+   the copy, or make one reviewed merge.
+6. Publish the reviewed result through the normal safe writer:
+   - plain Markdown: `lib.state_writer` / the owning command;
+   - encrypted State File: `vault.py read <domain> --json`, then
+     `vault.py write <domain> --expected-revision <token>`.
+7. After publication and verification, move the reviewed conflict copy out of
+   `state/`; retain it in `~/.artha-local/conflict-quarantine/`.
+8. Run preflight again. Any new conflict copy during resolution stops the procedure.
 
-| Scenario | Action |
-|----------|--------|
-| One file has a later `updated_at` and is a strict superset | Keep the later file; discard the older |
-| Both files have unique content (diverged edits) | Manual merge required — see §4 below |
-| Conflict copy is identical to the original | Delete the conflict copy |
+## Recovery
 
-### 4. Merge diverged edits (if necessary)
+- `state_restore.py list <state-file>` lists local recoverable revisions.
+- `state_restore.py show <state-file> <snapshot>` displays a selected revision.
+- `state_restore.py apply <state-file> <snapshot>` restores through the safe writer.
+- A plaintext snapshot is encrypted and machine-local. Encrypted `.age.v1..v3`
+  revisions are recovered on the laptop that has them.
+- `state_guard.py snapshot|verify|drill` remains the off-repo disaster-recovery path.
 
-For structured YAML frontmatter files (e.g., `open_items.md`, `goals.md`):
+## What not to do
 
-```bash
-# Use a three-way merge with the last-known-good state as the base
-# (Only if you have git history as the base)
-git show HEAD:state/finance.md > /tmp/finance_base.md
-diff3 STATE/finance.md /tmp/finance_base.md "state/finance-DESKTOP-PC.md" \
-  | grep -v '|||' | grep -v '=======' | grep -v '>>>>>>>' > /tmp/finance_merged.md
-
-# Review the result, then:
-cp /tmp/finance_merged.md state/finance.md
-```
-
-For prose-heavy state files (e.g., `immigration.md`, `employment.md`):
-1. Open both files side-by-side in an editor
-2. Apply any unique entries from the conflict copy to the main file
-3. Update `updated_at:` to the current timestamp: `date -u +"%Y-%m-%dT%H:%M:%SZ"`
-
-### 5. Delete the conflict copy
-
-```bash
-rm "state/finance-DESKTOP-PC.md"
-# Or for multiple conflicts:
-ls state/ | grep -E '\-conflict|\-DESKTOP|\-LAPTOP| \([0-9]\)' | xargs -I{} rm "state/{}"
-```
-
-### 6. Verify preflight is clean
-
-```bash
-python scripts/preflight.py
-# Expected: no conflict warnings
-```
-
----
-
-## Prevention
-
-| Strategy | How |
-|----------|-----|
-| Encrypt before closing laptop | `python scripts/vault.py encrypt` — vault files are locked during sync |
-| Use a single active session | Sign in on only one machine at a time when writing to sensitive state files |
-| Keep OneDrive sync current | Confirm sync is complete before opening state files on a second machine |
-
----
-
-## Adding to Ignore List (Suppress Repeat Alerts)
-
-If a specific conflict copy is intentionally kept (e.g., as a backup reference), add it
-to `sync_conflict_ignore` in `config/user_profile.yaml`:
-
-```yaml
-sync:
-  conflict_ignore:
-    - "state/finance-DESKTOP-PC.md"   # manual backup copy, not a real conflict
-```
-
-This suppresses the preflight warning for that specific file.
-
----
-
-## Conflict Copy Naming Reference
-
-| Pattern | Source |
-|---------|--------|
-| `filename-DEVICE-NAME.ext` | Windows OneDrive client |
-| `filename (1).ext` | OneDrive web or macOS client |
-| `filename-conflict.ext` | OneDrive conflict marker |
-| `filename-LAPTOP-NAME.ext` | Laptop machine name suffix |
-
----
-
-*Last updated: 2026-04-14 (DEBT-005 implementation)*
+- Do not use `git show HEAD:state/...`; ignored State Files are not recoverable from Git.
+- Do not bulk-run `vault.py decrypt` in the OneDrive checkout.
+- Do not silently delete both variants.
+- Do not use filename timestamps as authority.
+- Do not continue writes while the conflict state is unknown.
+- Do not describe a local CAS success as prevention of an offline cross-laptop race.
