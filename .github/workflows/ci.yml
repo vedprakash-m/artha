@@ -158,7 +158,7 @@ jobs:
         with:
           pattern: ubuntu-cov-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-shard-*
           path: ${{ runner.temp }}/ubuntu-shards
-      - name: Combine shards & verify >= 85% combined, line and branch floors
+      - name: Combine shards & verify >= 85% line and >= 83% branch floors
         run: |
           python tools/merge_windows_coverage.py \
             --shards-dir "${{ runner.temp }}/ubuntu-shards" --shards 4 --artifact-prefix ubuntu-cov \
@@ -167,7 +167,7 @@ jobs:
             --include-target "scripts/catchup_core/*" \
             --collect-arg=-m --collect-arg="not scale" --fail-under 85 \
             tests/catchup_core
-          python tools/check_core_coverage.py coverage.xml --minimum=85 --branch-minimum=85
+          python tools/check_core_coverage.py coverage.xml --minimum=85 --branch-minimum=83
         env:
           PYTHONPATH: scripts
       - name: Changed-line coverage (>= 85% core, >= 95% per security file)

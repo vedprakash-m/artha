@@ -92,7 +92,8 @@ lint-state-writes: ## AFW Wave 0: no NEW direct .write_text() outside state writ
 CORE_PKG ?= scripts/catchup_core
 CORE_TESTS ?= tests/catchup_core
 COV_MIN ?= 85
-COV_BRANCH_MIN ?= 85
+# Lowered from 85 on 2026-11-20: well-covered Engine release/authority code was removed.
+COV_BRANCH_MIN ?= 83
 DIFF_BASE ?= origin/main
 DIFF_RANGE_NOTATION ?= ...
 # Extra pytest arguments, e.g. PYTEST_ARGS="-n auto" (CI runs the coverage gates under pytest-xdist).

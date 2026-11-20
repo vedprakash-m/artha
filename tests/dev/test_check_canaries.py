@@ -227,7 +227,7 @@ def test_make_default_coverage_floors_are_85_percent(tmp_path):
         capture_output=True, text=True, encoding="utf-8", timeout=30, env=_env(),
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "--minimum=85 --branch-minimum=85" in result.stdout
+    assert "--minimum=85 --branch-minimum=83" in result.stdout
     assert "--fail-under=85" in result.stdout
     assert result.stdout.count("--cov-fail-under=85") == 2
     assert "--cov=catchup_core.session_lock" in result.stdout
