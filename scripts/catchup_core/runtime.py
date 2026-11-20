@@ -246,6 +246,8 @@ def build_fetchers(
     from catchup_core.admitted_ingest import fetch_gmail  # noqa: PLC0415
     fetchers: dict[str, Callable[[], ConnectorFetch]] = {}
     for pack_name, spec in config.sources.items():
+        if pack_name not in required:
+            continue  # a Domain run fetches only its own pack's sources
         account_scope = str(spec.get("account_scope", "unclassified"))
         def unavailable(
                 name: str = pack_name, scope: str = account_scope,

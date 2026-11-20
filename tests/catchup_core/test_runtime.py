@@ -164,6 +164,13 @@ def test_fetchers_remain_unavailable_until_personal_source_classification():
     assert calls == []
 
 
+def test_domain_run_builds_fetchers_only_for_its_own_pack_sources():
+    cfg = rt.RuntimeConfig({"home_email": {"connector": "gmail", "account_scope": "p"},
+                            "finance_email": {"connector": "gmail", "account_scope": "p"}}, ["k"], "o")
+    f = rt.build_fetchers(cfg, "2026-10-01T00:00:00Z", None, None, {"home_email": True})
+    assert set(f) == {"home_email"}
+
+
 def test_fetchers_do_not_load_handlers_before_personal_source_classification():
     seen = {}
 
