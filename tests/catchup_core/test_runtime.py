@@ -263,7 +263,8 @@ def test_existing_coverage_does_not_admit_personal_or_work_fetches(tmp_path, mon
         led.set_coverage("school_email", "personal", "complete", completed_at="2026-10-11T10:00:00Z")
         spec = {"connector": "gmail", "account_scope": "personal"}
         cfg = rt.RuntimeConfig({"school_email": spec}, ["kid1"], "owner")
-        fetch = rt.build_fetchers(cfg, "2026-01-01T00:00:00Z", lambda _: Handler, lambda _: {}, {}, led)
+        fetch = rt.build_fetchers(cfg, "2026-01-01T00:00:00Z", lambda _: Handler, lambda _: {},
+                                   {"school_email": True}, led)
         assert fetch["school_email"]().status is CoverageStatus.UNAVAILABLE
         cfg.sources["school_email"]["namespace"] = "work"
         assert fetch["school_email"]().status is CoverageStatus.UNAVAILABLE

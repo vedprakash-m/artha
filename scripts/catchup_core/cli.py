@@ -77,7 +77,11 @@ def _default_factory(request: CatchupRequest) -> Deps:
     if request.mode is not ExecutionMode.SHADOW and not cutover:
         raise NotConfigured("authoritative runs are disabled until the pilot is cut over; use --shadow")
     try:
-        return build_deps(request)
+        if request.mode is ExecutionMode.SHADOW:
+            return build_deps(request)
+        from catchup_core.runtime import _default_loaders  # noqa: PLC0415
+        handler_loader, auth_loader = _default_loaders()  # enrolled Gmail source only (build_fetchers gates the rest)
+        return build_deps(request, handler_loader=handler_loader, auth_loader=auth_loader)
     except (RuntimeConfigError, OSError, ContractError, LedgerError, KeyUnavailableError, SessionBusy) as exc:
         raise NotConfigured(str(exc)) from exc
 

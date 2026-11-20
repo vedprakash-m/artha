@@ -134,6 +134,19 @@ def test_default_cutover_flag_follows_environment_and_authoritative_runs_stay_di
         cli._default_factory(CatchupRequest("cu_x", "owner", "cli", mode=ExecutionMode.AUTHORITATIVE, host="h"))
 
 
+def test_authoritative_default_factory_passes_provider_loaders_but_shadow_does_not(monkeypatch):
+    from catchup_core import runtime
+    from catchup_core.contracts import CatchupRequest, ExecutionMode
+    seen = []
+    monkeypatch.setenv("ARTHA_CUTOVER", "1")
+    monkeypatch.setattr(runtime, "_default_loaders", lambda: ("H", "A"))
+    monkeypatch.setattr(runtime, "build_deps", lambda request, **kw: seen.append((request.mode, kw)) or "deps")
+    for mode in (ExecutionMode.AUTHORITATIVE, ExecutionMode.SHADOW):
+        assert cli._default_factory(CatchupRequest("cu_x", "owner", "cli", mode=mode, host="h")) == "deps"
+    assert seen == [(ExecutionMode.AUTHORITATIVE, {"handler_loader": "H", "auth_loader": "A"}),
+                    (ExecutionMode.SHADOW, {})]
+
+
 def test_bundle_enroll_command_prints_the_secret_once_and_export_demands_configuration(monkeypatch):
     store = {}
     fake = types.SimpleNamespace(get_password=lambda s, n: store.get((s, n)),
