@@ -94,3 +94,18 @@ def test_allowlist_excludes_files_whose_writers_are_not_yet_guarded():
     unguarded = {"pr_manager.md", "ai_trend_radar.md", "home_intelligence.md", "home_iot.md",
                  "career_search.md.age"}
     assert not names & unguarded
+
+
+def test_decision_tracker_appends_to_a_crlf_file(tmp_path, monkeypatch):
+    """Windows files use CRLF; the read-back check must compare exact bytes, not translated text."""
+    import decision_tracker as m
+
+    monkeypatch.setenv("ARTHA_LOCAL_DIR", str(tmp_path / "local"))
+    path = tmp_path / "state" / "decisions.md"
+    path.parent.mkdir()
+    path.write_bytes(b"| id | title |\r\n")
+    proposal = m.DecisionProposal(
+        title="Synthetic decision", options=["a", "b"], deadline="2030-02-01", visibility="private", source="test"
+    )
+    m.DecisionTracker().persist_proposal(proposal, path)
+    assert "Synthetic decision" in path.read_bytes().decode("utf-8")

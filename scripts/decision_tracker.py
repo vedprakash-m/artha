@@ -189,7 +189,7 @@ class DecisionTracker:
         with publication_fence(decisions_path):
             existing_content = ""
             if decisions_path.exists():
-                observed_content = decisions_path.read_text(encoding="utf-8")
+                observed_content = decisions_path.read_bytes().decode("utf-8")  # exact bytes: no newline translation
                 existing_content, expected_token = read_versioned(decisions_path)
                 if existing_content != observed_content:
                     raise RuntimeError("decision file changed while it was read")

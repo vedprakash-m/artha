@@ -1,6 +1,7 @@
 """Light mode LF-05 AC3: a real child process killed at each publication step leaves a whole file."""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -56,7 +57,7 @@ STAGES = [("before_fsync", OLD), ("before_replace", OLD), ("after_replace", NEW)
 
 def _run(script: str, stage: str, target: Path, tmp_path: Path, **extra: str) -> None:
     env = {
-        "PATH": "/usr/bin:/bin:/opt/homebrew/bin",
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "HOME": str(tmp_path),
         "ARTHA_LOCAL_DIR": str(tmp_path / "local"),
         "KILL_SCRIPTS": str(SCRIPTS),
