@@ -24,12 +24,18 @@ cd artha
 bash setup.sh          # Windows: .\setup.ps1
 ```
 
-Setup runs a demo briefing, then a 2-minute wizard to personalize Artha. Then open your AI CLI in this folder and say:
+Setup runs a demo briefing (fictional data), then a 2-minute wizard that creates your profile. The wizard does **not**
+connect your accounts, so finish these before your first real briefing:
 
-**catch me up**
+1. **Connect a source.** Gmail and Google Calendar: `python scripts/setup_google_oauth.py`. Outlook, iCloud and others:
+   see [docs/quickstart.md](docs/quickstart.md#step-5-connect-a-data-source).
+2. **Encrypt sensitive files** (recommended): install `age`, run `age-keygen`, then `python scripts/vault.py store-key`
+   as described in [docs/quickstart.md](docs/quickstart.md#step-4-set-up-encryption).
+3. **Check it:** `python artha.py --doctor`
+4. Open your AI CLI in this folder and run **`/bootstrap`** for a guided interview that fills in your family, finances and
+   goals (skip it to fill them in over time), then say **catch me up**.
 
-Next steps: [Quick start](docs/quickstart.md) (profile, encryption, connecting Gmail or Outlook) and
-[Troubleshooting](docs/troubleshooting.md).
+Stuck? [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ---
 
