@@ -9,6 +9,14 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — Refix Artha closed; narrowed `home` live release, 2026-11-19
+
+- Closed the refix specification with owner-disposed exceptions; remaining live work moved to a follow-on spec.
+- Live: schema 21 accepted, `release_resign_21` bound to a one-Domain `home` cohort, `home_email` enrolled, first enrolled
+  Gmail fetch completed. New-Signal extraction remains held by design.
+- Fixed: legacy-alert protection refused any alert; inspection freshness masked completed results; a Domain run built
+  fetchers for every source; the Catch-up command lacked provider loaders for enrolled sources.
+
 ### Added — Refix Artha engineering contracts, 2026-11-19
 
 | Change | Modified files | Validation |

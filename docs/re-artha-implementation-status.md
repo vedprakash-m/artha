@@ -1,5 +1,12 @@
 # re-artha implementation status — 2026-11-18
 
+## Refix specification closed — 2026-11-19
+
+Closed with owner-disposed exceptions; archived (owner-local). Engineering: **Done**. Operational acceptance: moved to the
+follow-on owner-local spec `signal-admission` (tasks S1–S11: Signal admission, negative live cases, legacy Fact
+regeneration, `outlook_inbox`, shadow ledger, live UAT, wider release, renewal across a migration, Work, owner decisions,
+local test-environment failures). Release: the narrowed `home` cohort only. Nothing is claimed accepted.
+
 ## Live `home` release and first Gmail fetch — 2026-11-19 (evening)
 
 Owner narrowed the live release to Domain `home` (source `home_email`) and re-signed; implementation `cc9c5738…`.

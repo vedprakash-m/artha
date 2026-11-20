@@ -1,5 +1,14 @@
 # re-Artha engineering handoff — 2026-10-25
 
+## Closure — 2026-11-19
+
+The refix specification (owner-local; archived) is **closed with owner-disposed exceptions**. Engineering is done and
+pushed. The narrowed one-Domain `home` release is signed and the first live enrolled Gmail fetch completed (no matching
+mail). New-Signal extraction is held by design; the remaining live items (Signal admission, live UAT, shadow ledger,
+renewal across a migration, Work recovery, wider release, owner decisions D-05/D-08/B.5) are the scope of the follow-on
+owner-local spec `signal-admission`. Operational acceptance and release beyond `home` remain Held. Start new work there,
+not in the sections below.
+
 ## Controlling Windows checkpoint — 2026-10-28
 
 Read the current checkpoint at the top of `re-artha-implementation-status.md` before historical
