@@ -7,15 +7,9 @@
 4. Reproduce defects with synthetic, isolated tests, then repair the relevant boundary. Use `tools/run_tests_isolated.py`
    for the full suite; never exercise production persistence to validate code.
 5. Run the applicable quality gates, generated-register checks and privacy scan. Record actual results and remaining gaps.
-6. For an owner-requested validated main delivery with an enrolled renewal delegation, use its preserved
-   `tools/release_renewal.py` evaluator and `deliver` in the user-started session. Stage the exact candidate without
-   unrelated work; use an existing exact task approval or an eligible enrolled routine scope. Pass `--quiescent`
-   only after the owner confirms that the other machine's source writers are stopped.
-7. If approval, preserved evaluator, native authority or applicable evidence is missing, report renewal held; do not
-   implicitly enroll, re-sign or activate. A separately authorized Git push may still proceed after applicable delivery
-   and privacy checks, but does not renew the release. Report Git, CI and renewal separately.
-8. Keep cutover and unreviewed action types disabled until their release evidence exists. Do not replace missing outcomes
-   with test counts or inferred capability success. Follow the standing Git delivery instructions once checks pass.
+6. Light mode is the only operating mode: `cutover` stays `false` and there is no release, signature, renewal or
+   authority-host step. Keep unreviewed action types disabled until their evidence exists, and do not replace missing
+   outcomes with test counts or inferred capability success. Follow the standing Git delivery instructions once checks pass.
 
 ## Two machines, one synced checkout
 

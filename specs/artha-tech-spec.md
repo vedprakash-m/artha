@@ -7195,7 +7195,7 @@ def check_work_health_kusto_auth() -> CheckResult:
 
 Light mode runs `brief`, `items`, `goals` and `domain` from State Files with the authoritative Engine off
 (`cutover: false`), on whichever laptop has the OneDrive checkout. One laptop writes at a time. Feature spec:
-`specs/light-artha.md`. Engine effective state is `file.cutover is True and ARTHA_CUTOVER != "0"`
+`.archive/specs/light-artha-2026-11-20.md`. Engine effective state is `file.cutover is True and ARTHA_CUTOVER != "0"`
 (`lib/light_mode.py`: `configured_cutover`, `effective_cutover`, `describe_cutover`). Environment `1` never enables it.
 
 | Component | Role |
@@ -8238,9 +8238,6 @@ reviewed re-sign.
 - **Held action types.** Preflight's action-handler check reads `config/actions.yaml` `live_trial.held`; a degraded
   handler for a held type is reported as "held, not checked" and does not fail the check. Both preflight entry points
   (`scripts/preflight.py` and the `scripts/preflight/` package, which shadows it on import) carry the same rule.
-- **Release drift advisory.** `tools/check_release_drift.py --staged` mirrors `_implementation_fingerprint` path
-  selection (capability modules plus `scripts/catchup_core/*.py` and migrations) and names staged files that would
-  invalidate the signed release. The pre-commit hook runs it after a clean privacy scan; it never blocks.
 - **Extractor identity.** The runtime cannot verify which model answered extraction requests, so the entry points
   enforce it: the brief route and the scheduled check require the pinned extractor and hand extraction to a Sonnet
   subagent otherwise, without leaving a paused run.

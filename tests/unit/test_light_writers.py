@@ -90,7 +90,7 @@ def test_allowlist_excludes_files_whose_writers_are_not_yet_guarded():
 
     root = Path(__file__).resolve().parents[2]
     names = {path.name for path in light_markdown_targets(root)}
-    # These still have scripted writers that publish directly (see specs/light-artha.md §14).
+    # These still have scripted writers that publish directly (see .archive/specs/light-artha-2026-11-20.md §14).
     unguarded = {"pr_manager.md", "ai_trend_radar.md", "home_intelligence.md", "home_iot.md",
                  "career_search.md.age"}
     assert not names & unguarded

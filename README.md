@@ -146,8 +146,7 @@ python artha.py --doctor   # 11-point health check for your installation
 ```
 
 Install the hooks once with `git config core.hooksPath .githooks`: the pre-commit and pre-push privacy scans block
-personal data and secrets, and the pre-commit step also warns when a change touches files the signed release
-fingerprints (`tools/check_release_drift.py`), so authoritative Catch-ups would refuse until a re-sign.
+personal data and secrets.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 
