@@ -48,6 +48,14 @@ state_files:
 
   # ── Pipeline-managed state (written by scripts/pipeline.py steps) ─────
 
+  - path: "state/health-check.md"
+    owner_agent: "pipeline"
+    write_frequency: "every catch-up close"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 48
+    sensitivity: "medium"
+    description: "Catch-up health, connector coverage and completion watermark."
+
   - path: "state/goals.md"
     owner_agent: "pipeline"
     write_frequency: "user-triggered"
@@ -194,14 +202,14 @@ state_files:
     max_staleness_hours: 720
     sensitivity: "medium"
 
-  - path: "state/employment.md"
+  - path: "state/employment.md.age"
     owner_agent: "pipeline"
     write_frequency: "user-triggered"
     backup_tier: "gfs-standard"
     max_staleness_hours: 168
     sensitivity: "high"
 
-  - path: "state/kids.md"
+  - path: "state/kids.md.age"
     owner_agent: "pipeline"
     write_frequency: "user-triggered"
     backup_tier: "gfs-standard"
@@ -257,6 +265,69 @@ state_files:
     max_staleness_hours: 168
     sensitivity: "low"
 
+  - path: "state/scenarios.md"
+    owner_agent: "planning_signals"
+    write_frequency: "on accepted planning follow-up"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "medium"
+
+  - path: "state/planning_signals.md"
+    owner_agent: "planning_signals"
+    write_frequency: "daily catch-up planning pass"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 48
+    sensitivity: "medium"
+
+  - path: "state/health-metrics.md"
+    owner_agent: "pipeline"
+    write_frequency: "scorecard refresh"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "medium"
+
+  - path: "state/content_stage.md"
+    owner_agent: "tribe_agent"
+    write_frequency: "when a relationship draft is staged"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "medium"
+
+  - path: "state/home_iot.md"
+    owner_agent: "home_device_monitor"
+    write_frequency: "scheduled device scan"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 26
+    sensitivity: "medium"
+
+  - path: "state/home_intelligence.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "medium"
+
+  - path: "state/ai_trend_radar.md"
+    owner_agent: "ai_trend_radar"
+    write_frequency: "scheduled scan"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "low"
+
+  - path: "state/career_growth_practices.md"
+    owner_agent: "work-plan"
+    write_frequency: "explicit career planning update"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "normal"
+
+  - path: "state/community.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "medium"
+
   - path: "state/digital.md"
     owner_agent: "pipeline"
     write_frequency: "user-triggered"
@@ -278,7 +349,7 @@ state_files:
     max_staleness_hours: 720
     sensitivity: "low"
 
-  - path: "state/caregiving.md"
+  - path: "state/caregiving.md.age"
     owner_agent: "pipeline"
     write_frequency: "user-triggered"
     backup_tier: "gfs-standard"
@@ -365,13 +436,29 @@ state_files:
 
   # ── Career Search Intelligence ──────────────────────────────────────────
 
-  - path: "state/career_search.md"
+  - path: "state/career_search.md.age"
     owner_agent: "artha-career"
     write_frequency: "user-triggered (/career eval, /career pdf, /career tracker)"
     backup_tier: "gfs-standard"
     max_staleness_hours: 720
     sensitivity: "high"
     description: "Career search application tracker, CV config, story bank, campaign state. Active only during campaign."
+
+  - path: "state/occasions.md.age"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "high"
+    description: "Occasion and family-event state, stored encrypted."
+
+  - path: "state/business.md.age"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "critical"
+    description: "Business and side-finance state, stored encrypted."
 
   - path: "state/career_audit.jsonl"
     owner_agent: "artha-career"

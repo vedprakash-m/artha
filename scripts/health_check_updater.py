@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 from lib.common import STATE_DIR
 
@@ -46,7 +47,17 @@ def update_channel_health_md(
         block_lines.append(f"    push_count_today: {push_count_today}")
     new_ch_block = "\n".join(block_lines)
 
-    content = health_md.read_text(encoding="utf-8")
+    from lib.state_writer import StateWriteConflict, read_versioned, write
+
+    try:
+        content, expected_token = read_versioned(health_md)
+    except (OSError, StateWriteConflict):
+        return
+    if not content.startswith("---"):
+        content = (
+            "---\nschema_version: '1.0'\ndomain: health-check\n"
+            f"last_updated: '{now_iso[:10]}'\n---\n" + content
+        )
 
     # Look for the entire channel_health fenced YAML block
     section_re = re.compile(
@@ -78,6 +89,18 @@ def update_channel_health_md(
         new_content = content.rstrip() + "\n" + append_block
 
     try:
-        health_md.write_text(new_content, encoding="utf-8")
-    except OSError:
-        pass  # Non-critical — don't crash callers
+        result = write(
+            health_md,
+            new_content,
+            domain="health-check",
+            source="health_check_updater",
+            expected_token=expected_token,
+            pii_check=False,
+            snapshot=health_md.resolve().is_relative_to(
+                Path(__file__).resolve().parent.parent
+            ),
+        )
+        if not result.success:
+            return
+    except (OSError, StateWriteConflict):
+        return  # Callers see the machine-local refusal marker; no success-shaped fallback.

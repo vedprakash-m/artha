@@ -17,8 +17,6 @@ add_fact(fact, memory_path, *, domain="general", max_facts=30) -> bool
 
 from __future__ import annotations
 
-import os
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -89,17 +87,9 @@ def _write_frontmatter(path: Path, fm: dict[str, Any], body: str) -> None:
     except ImportError:
         return
     fm_text = yaml.dump(fm, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    new_content = f"---\n{fm_text}---\n{body}"
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".memory-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(new_content)
-        os.replace(tmp, path)
-    except Exception:  # noqa: BLE001
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+    from lib.state_writer import write_current
+
+    write_current(path, f"---\n{fm_text}---\n{body}", domain="memory", source="memory_writer")
 
 
 def _log_eviction(evicted: dict[str, Any], fact_count: int, audit_path: Path) -> None:

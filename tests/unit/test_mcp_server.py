@@ -99,24 +99,29 @@ class TestWriteStateFile:
     def test_writes_plain_for_non_encrypted_domain(self, tmp_path):
         import mcp_server
 
+        content = (
+            "---\nschema_version: '1.0'\ndomain: goals\nlast_updated: '2026-11-19'\n---\n"
+            "# Goals\n- updated\n"
+        )
         with patch.object(mcp_server, "_STATE_DIR", tmp_path):
-            encrypted = mcp_server._write_state_file("goals", "# Goals\n- updated")
+            encrypted = mcp_server._write_state_file("goals", content)
         assert encrypted is False
-        assert (tmp_path / "goals.md").read_text() == "# Goals\n- updated"
+        assert (tmp_path / "goals.md").read_text() == content
 
     def test_encrypts_sensitive_domain(self, tmp_path):
         import mcp_server
 
         mock_vault = MagicMock()
-        mock_vault.get_public_key.return_value = "age1key..."
-        mock_vault.age_encrypt.return_value = True
+        mock_vault.read_versioned.return_value = ("# Finance\n", "a" * 64)
 
         with patch.object(mcp_server, "_STATE_DIR", tmp_path), \
-             patch.dict(sys.modules, {"vault": mock_vault}):
+             patch("foundation.get_age_vault", return_value=mock_vault):
             encrypted = mcp_server._write_state_file("finance", "# Finance")
 
         assert encrypted is True
-        mock_vault.age_encrypt.assert_called_once()
+        mock_vault.write.assert_called_once_with(
+            "finance", "# Finance", expected_revision="a" * 64
+        )
 
 
 # ── _audit ───────────────────────────────────────────────────────────────────

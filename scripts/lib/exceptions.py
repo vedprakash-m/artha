@@ -45,7 +45,7 @@ class VaultAccessRequired(ArthaError):
     def __init__(self, domain: str) -> None:
         super().__init__(
             f"Domain '{domain}' requires vault decryption. "
-            "Run: python scripts/vault.py decrypt"
+            "Run: python scripts/vault.py read <domain>"
         )
         self.domain = domain
 

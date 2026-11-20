@@ -92,6 +92,7 @@ def check_vault_lock(auto_fix: bool = False) -> CheckResult:
     lock_age_m  = int(lock_age / 60)
 
     # Determine if PID is still alive (read JSON lock if present)
+    lock_data: dict = {}
     try:
         import json as _json
         lock_data = _json.loads(open(LOCK_FILE).read().strip())
@@ -107,6 +108,20 @@ def check_vault_lock(auto_fix: bool = False) -> CheckResult:
             return True
         except OSError:
             return False
+
+    from lib.light_mode import host_id
+
+    marker_host = host_id(str(lock_data.get("machine") or lock_data.get("host") or ""))
+    if marker_host:
+        if marker_host != host_id():
+            return CheckResult(
+                "vault lock state",
+                "P1",
+                False,
+                f"Foreign-host session marker from {marker_host}; PID not probed and marker preserved",
+                fix_hint="Confirm that host is stopped, then run: "
+                         f"python3 scripts/vault.py release-lock --host {marker_host}",
+            )
 
     is_stale = lock_age > STALE_LOCK_SECONDS or (pid > 0 and not _pid_alive(pid))
 

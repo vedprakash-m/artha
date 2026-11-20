@@ -334,9 +334,19 @@ def _write_state_files(
     notes_lines = [f"- {n}" for n in notes] if notes else ["_No notes._"]
 
     # Update state/social.md (replace or append Tribe section)
+    from lib.state_writer import create_if_absent_token, read_versioned, write
+
+    expected = None
     existing = ""
     if _SOCIAL_FILE.exists():
-        existing = _SOCIAL_FILE.read_text(encoding="utf-8", errors="replace")
+        existing, expected = read_versioned(_SOCIAL_FILE)
+    else:
+        expected = create_if_absent_token(_SOCIAL_FILE)
+    if not existing.startswith("---"):
+        existing = (
+            "---\nschema_version: '1.0'\ndomain: social\n"
+            f"last_updated: '{today}'\n---\n\n" + existing
+        )
 
     # Strip any existing auto-generated tribe block
     tribe_block_re = re.compile(
@@ -364,7 +374,16 @@ _source: tribe.db — generated_at: {_now_utc()}_
 _session_trace_id: {trace_id}_
 <!-- tribe-agent-end -->
 """
-    _SOCIAL_FILE.write_text(existing + tribe_block, encoding="utf-8")
+    result = write(
+        _SOCIAL_FILE,
+        existing + tribe_block,
+        domain="social",
+        source="tribe_agent",
+        expected_token=expected,
+        snapshot=False,
+    )
+    if not result.success:
+        raise RuntimeError("social.md write was refused")
 
     # Write content_stage.md (draft placeholder)
     if draft_targets:
@@ -379,7 +398,16 @@ _session_trace_id: {trace_id}_
                 f"- Suggested channel: {s.get('circle', 'general')}\n"
                 f"- Note: decay {s['score']} — needs reconnect message\n"
             )
-        _STAGE_FILE.write_text("\n".join(stage_lines), encoding="utf-8")
+        from lib.state_writer import write_current
+
+        write_current(
+            _STAGE_FILE,
+            "---\nschema_version: '1.0'\ndomain: content_stage\n"
+            f"last_updated: '{today}'\n---\n\n" + "\n".join(stage_lines),
+            domain="content_stage",
+            source="tribe_agent",
+            snapshot=False,
+        )
 
     records_written = len(scored)
     return records_written

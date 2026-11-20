@@ -12,6 +12,7 @@ Spec: §4.4, §4.5, §4.6, §8.1.1
 from __future__ import annotations
 
 import errno
+import hashlib
 import os
 import shutil
 import tempfile
@@ -22,6 +23,7 @@ from typing import Any
 
 import yaml
 
+from lib.local_paths import local_dir
 from pr_stage.domain import ContentCard, CardStatus
 from pr_stage.telemetry import StageLogger
 
@@ -74,7 +76,13 @@ def _unlock_file(lock_fd) -> None:
 
 def _write_yaml_atomic(dest_path: Path, data: dict) -> None:
     """Atomic YAML write: lock → tempfile → fsync → os.replace()."""
-    lock_path = dest_path.with_suffix(dest_path.suffix + ".lock")
+    repository = Path(__file__).resolve().parents[2]
+    if dest_path.resolve().is_relative_to(repository / "state"):
+        identity = hashlib.sha256(str(dest_path.resolve()).encode("utf-8")).hexdigest()
+        lock_path = local_dir() / "state-locks" / f"{identity}.lock"
+    else:
+        lock_path = dest_path.with_suffix(dest_path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(lock_path, "a+b") as lock_fd:

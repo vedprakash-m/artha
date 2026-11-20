@@ -143,7 +143,11 @@ class SelfModelWriter:
         # --- Load existing self-model (preserve personality section) --
         existing_content = ""
         if self_model_path.exists():
-            existing_content = self_model_path.read_text(encoding="utf-8")
+            from lib.state_writer import read_versioned
+            existing_content, expected_token = read_versioned(self_model_path)
+        else:
+            from lib.state_writer import create_if_absent_token
+            expected_token = create_if_absent_token(self_model_path)
 
         # --- Build new sections ------------------------------------
         domain_confidence = self._build_domain_confidence(facts, catchup_runs)
@@ -193,7 +197,20 @@ class SelfModelWriter:
 
         from catchup_core.session_lock import writer_fence  # noqa: PLC0415
         with writer_fence(self_model_path):  # refused during capture and in a restored installation
-            self_model_path.write_text(new_content, encoding="utf-8")
+            from lib.state_writer import write
+            result = write(
+                self_model_path,
+                new_content,
+                domain="self_model",
+                source="self_model_writer",
+                expected_token=expected_token,
+                pii_check=False,
+                snapshot=self_model_path.resolve().is_relative_to(
+                    Path(__file__).resolve().parent.parent
+                ),
+            )
+            if not result.success:
+                return False
         return True
 
     # ------------------------------------------------------------------

@@ -32,10 +32,21 @@ from pathlib import Path
 
 from catchup_core.session_lock import publication_fence
 from lib.state_frontmatter import FrontmatterError, split_frontmatter
+from lib.sync_conflicts import ConflictScanUnknown, find_conflicts
+from lib.write_refusals import RefusalStateUnknown, record_refusal
 
 __all__ = [
-    "AgeVault", "DestructiveWrite", "StructureReport", "VaultConflict", "VaultError",
-    "VaultUnavailable", "check_write", "find_age_bin", "record_ids", "split_monthly",
+    "AgeVault",
+    "DestructiveWrite",
+    "StructureReport",
+    "VaultConflict",
+    "VaultError",
+    "VaultUnavailable",
+    "VaultUncertain",
+    "check_write",
+    "find_age_bin",
+    "record_ids",
+    "split_monthly",
     "validate_structure",
 ]
 
@@ -57,6 +68,10 @@ class DestructiveWrite(VaultError):
 
 class VaultConflict(VaultError):
     """The ciphertext changed after its caller read the original revision."""
+
+
+class VaultUncertain(VaultError):
+    """Replacement happened, but the final outcome is not safe to call committed."""
 
 
 # ── structural validation (replaces the size-shrink heuristic) ─────────────
@@ -215,6 +230,23 @@ class AgeVault:
         return True
 
     @staticmethod
+    def _check_conflicts(path: Path, name: str, *, published: bool = False) -> None:
+        try:
+            conflicts = find_conflicts(path)
+        except ConflictScanUnknown as exc:
+            error = VaultUncertain if published else VaultConflict
+            raise error(
+                f"{name}: encrypted State File conflict status is unknown: {exc}"
+            ) from exc
+        if conflicts:
+            error = VaultUncertain if published else VaultConflict
+            prefix = "publication completed but " if published else ""
+            raise error(
+                f"{name}: {prefix}encrypted State File conflict copy present: "
+                + ", ".join(str(conflict) for conflict in conflicts)
+            )
+
+    @staticmethod
     def _cipher_revision(path: Path) -> str:
         if not AgeVault._validate_ciphertext_path(path, missing_ok=True):
             return ""
@@ -291,15 +323,30 @@ class AgeVault:
         """Validate, encrypt from memory, keep a recoverable version, replace atomically."""
         path = self.path_for(name)
         self._validate_ciphertext_path(path, missing_ok=True)
-        with publication_fence(path):
-            return self._write(
-                name, text, expected_domain, approved_removals, previous,
-                expected_revision,
-            )
+        try:
+            with publication_fence(path):
+                return self._write(
+                    name, text, expected_domain, approved_removals, previous,
+                    expected_revision,
+                )
+        except VaultError as exc:
+            self._record_state_refusal(path, str(exc))
+            raise
+
+    @staticmethod
+    def _record_state_refusal(path: Path, reason: str) -> None:
+        repository = Path(__file__).resolve().parents[2]
+        try:
+            path.resolve().relative_to(repository / "state")
+        except ValueError:
+            return
+        with contextlib.suppress(OSError, RefusalStateUnknown):
+            record_refusal(path, reason)
 
     def _write(self, name: str, text: str, expected_domain: str | None, approved_removals: Iterable[str],
                previous: str | None, expected_revision: str | None) -> Path:
         path = self.path_for(name)
+        self._check_conflicts(path, name)
         actual_revision = self._cipher_revision(path)
         if expected_revision is not None:
             if expected_revision != "" and (
@@ -317,19 +364,29 @@ class AgeVault:
         blob = self._encrypt(text)
         self._dir.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=self._dir, prefix=f".{name}-", suffix=".age.tmp")
+        published = False
         try:
             with os.fdopen(fd, "wb") as fh:
                 fh.write(blob)
                 fh.flush()
                 os.fsync(fh.fileno())
+            if self._cipher_revision(path) != actual_revision:
+                raise VaultConflict(f"{name}: encrypted State File changed before replacement")
             if path.is_file():
                 self._rotate_versions(path)
             os.replace(tmp, path)
+            published = True
+            self._fsync_directory(path.parent)
             if path.read_bytes() != blob:
-                raise VaultError(f"{name}: encrypted publication verification failed")
-        except BaseException:
+                raise VaultUncertain(f"{name}: encrypted publication verification failed")
+            self._check_conflicts(path, name, published=True)
+        except BaseException as exc:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
+            if published and not isinstance(exc, VaultUncertain):
+                raise VaultUncertain(
+                    f"{name}: encrypted replacement outcome is uncertain"
+                ) from exc
             raise
         return path
 
@@ -338,10 +395,34 @@ class AgeVault:
             src = path.with_name(f"{path.name}.v{n}")
             if src.is_file():
                 os.replace(src, path.with_name(f"{path.name}.v{n + 1}"))
-        shutil.copy2(path, path.with_name(f"{path.name}.v1"))
+        destination = path.with_name(f"{path.name}.v1")
+        descriptor, temporary = tempfile.mkstemp(
+            dir=path.parent, prefix=f".{path.name}-v1-", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(path.read_bytes())
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, destination)
+            self._fsync_directory(path.parent)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary)
+            raise
         extra = path.with_name(f"{path.name}.v{_KEEP_VERSIONS + 1}")
         with contextlib.suppress(OSError):
             extra.unlink()
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        if os.name == "nt":
+            return
+        descriptor = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
     def versions(self, name: str) -> list[Path]:
         base = self.path_for(name)

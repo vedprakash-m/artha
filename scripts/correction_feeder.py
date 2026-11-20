@@ -28,7 +28,6 @@ import argparse
 import os
 import re
 import sys
-import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -84,20 +83,9 @@ def _strip_pii(value: str) -> str:
 # Frontmatter parsing
 # ---------------------------------------------------------------------------
 
-def _read_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
-    """Parse YAML frontmatter from a Markdown file.
-
-    Returns (frontmatter_dict, body_text).  If no frontmatter, returns
-    ({}, full_text).
-    """
-    try:
-        import yaml  # type: ignore[import]
-    except ImportError:
-        return {}, path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
-
-    if not path.exists():
-        return {}, ""
-    text = path.read_text(encoding="utf-8", errors="replace")
+def _parse_frontmatter_text(text: str) -> tuple[dict[str, Any], str]:
+    if "yaml" not in globals():
+        return {}, text
     if not text.startswith("---"):
         return {}, text
     end = text.find("\n---", 3)
@@ -112,7 +100,25 @@ def _read_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
     return fm, body
 
 
-def _write_frontmatter(path: Path, fm: dict[str, Any], body: str) -> None:
+def _read_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
+    """Parse YAML frontmatter from a Markdown file.
+
+    Returns (frontmatter_dict, body_text).  If no frontmatter, returns
+    ({}, full_text).
+    """
+    try:
+        import yaml  # type: ignore[import]
+    except ImportError:
+        return {}, path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+
+    if not path.exists():
+        return {}, ""
+    return _parse_frontmatter_text(path.read_text(encoding="utf-8", errors="replace"))
+
+
+def _write_frontmatter(
+    path: Path, fm: dict[str, Any], body: str, expected_token: object
+) -> None:
     """Write frontmatter + body back to file atomically."""
     try:
         import yaml  # type: ignore[import]
@@ -120,16 +126,17 @@ def _write_frontmatter(path: Path, fm: dict[str, Any], body: str) -> None:
         return
     fm_text = yaml.dump(fm, default_flow_style=False, allow_unicode=True, sort_keys=False)
     new_content = f"---\n{fm_text}---\n{body}"
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".memory-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(new_content)
-        os.replace(tmp, path)
-    except Exception:  # noqa: BLE001
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+    from lib.state_writer import write
+    result = write(
+        path,
+        new_content,
+        domain="memory",
+        source="correction_feeder",
+        expected_token=expected_token,
+        snapshot=path.resolve().is_relative_to(Path(__file__).resolve().parent.parent),
+    )
+    if not result.success:
+        raise RuntimeError("memory.md write was refused")
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +222,9 @@ def gc_expired(memory_path: Path = _MEMORY_FILE) -> int:
 
     Returns the number of facts pruned.
     """
-    fm, body = _read_frontmatter(memory_path)
+    from lib.state_writer import read_versioned
+    content, expected_token = read_versioned(memory_path)
+    fm, body = _parse_frontmatter_text(content)
     facts = fm.get("facts", [])
     if not isinstance(facts, list):
         return 0
@@ -224,7 +233,7 @@ def gc_expired(memory_path: Path = _MEMORY_FILE) -> int:
     pruned = original_count - len(live_facts)
     if pruned > 0:
         fm["facts"] = live_facts
-        _write_frontmatter(memory_path, fm, body)
+        _write_frontmatter(memory_path, fm, body, expected_token)
     return pruned
 
 

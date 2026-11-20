@@ -178,8 +178,23 @@ class DecisionTracker:
         Returns the new decision ID (DEC-NNN).
         Uses an OS-owned sidecar lock for exclusive read/append access.
         """
-        from catchup_core.session_lock import session_lock, writer_fence  # noqa: PLC0415
-        with writer_fence(decisions_path), session_lock(decisions_path.with_name(decisions_path.name + ".lock")):
+        from catchup_core.session_lock import publication_fence  # noqa: PLC0415
+        from lib.state_writer import (
+            StateWriteConflict,
+            create_if_absent_token,
+            read_versioned,
+            write,
+        )
+
+        with publication_fence(decisions_path):
+            existing_content = ""
+            if decisions_path.exists():
+                observed_content = decisions_path.read_text(encoding="utf-8")
+                existing_content, expected_token = read_versioned(decisions_path)
+                if existing_content != observed_content:
+                    raise RuntimeError("decision file changed while it was read")
+            else:
+                expected_token = create_if_absent_token(decisions_path)
             existing = self._load_decisions(decisions_path)
             next_id = self._next_id(existing)
             today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
@@ -194,15 +209,35 @@ class DecisionTracker:
                 "created_by": proposal.source,
                 "notes": "",
             }
-            with open(decisions_path, "a", encoding="utf-8") as fh:
-                opts_str = ", ".join(proposal.options) if proposal.options else ""
-                deadline_str = proposal.deadline if proposal.deadline else ""
-                line = (
-                    f"\n| {next_id} | {proposal.title} | "
-                    f"{opts_str} | {deadline_str} | open | {proposal.visibility} "
-                    f"| {today} |\n"
+            opts_str = ", ".join(proposal.options) if proposal.options else ""
+            deadline_str = proposal.deadline if proposal.deadline else ""
+            line = (
+                f"\n| {next_id} | {proposal.title} | "
+                f"{opts_str} | {deadline_str} | open | {proposal.visibility} "
+                f"| {today} |\n"
+            )
+            if not existing_content.startswith("---"):
+                existing_content = (
+                    "---\nschema_version: '1.0'\ndomain: decisions\n"
+                    f"last_updated: '{today}'\n---\n\n" + existing_content
                 )
-                fh.write(line)
+            try:
+                result = write(
+                    decisions_path,
+                    existing_content + line,
+                    domain="decisions",
+                    source="decision_tracker",
+                    expected_token=expected_token,
+                    pii_check=False,
+                    snapshot=decisions_path.resolve().is_relative_to(
+                        Path(__file__).resolve().parent.parent
+                    ),
+                    _already_fenced=True,
+                )
+            except StateWriteConflict as exc:
+                raise RuntimeError(f"decision write refused: {exc}") from exc
+            if not result.success:
+                raise RuntimeError("decision write refused")
 
         return next_id
 

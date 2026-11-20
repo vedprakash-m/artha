@@ -21,7 +21,7 @@ from preflight._types import (
     _rel,
     CheckResult,
 )
-from lib.local_paths import audit_log_path
+from lib.local_paths import audit_log_path, local_dir
 
 _READ_ONLY = False
 
@@ -181,37 +181,39 @@ def _audit_guardrail_force_override(cfg_path: str) -> None:
         return False
 
 def _detect_conflict_files(state_dir: str) -> list[str]:
-    """DEBT-005: Scan state_dir for OneDrive conflict copies.
+    """Scan registered State File targets using the shared conflict module."""
+    from lib.state_targets import light_markdown_targets
+    from lib.sync_conflicts import discover_conflict_copies
 
-    OneDrive conflict naming patterns (varies by OS locale and version):
-      - ``finance-DESKTOP-ABC.md``   (machine-name suffix)
-      - ``health (1).md``            (numbered copy)
-      - ``estate-conflict.md``       (explicit 'conflict' keyword)
-      - ``immigration-LAPTOP-XYZ.md``
-
-    Returns a list of absolute paths to detected conflict files.
-    """
-    # Patterns that reliably indicate a OneDrive conflict copy
-    _CONFLICT_PATTERNS = [
-        re.compile(r".*-DESKTOP-\w+\."),       # finance-DESKTOP-PC.md
-        re.compile(r".*-LAPTOP-\w+\."),         # health-LAPTOP-XYZ.md
-        re.compile(r".*-conflict\."),           # estate-conflict.md
-        re.compile(r".*\s\(\d+\)\."),           # health (1).md
-        re.compile(r".*-PC-\w+\."),             # misc Windows machine names
-    ]
-    conflicts: list[str] = []
+    directory = Path(state_dir)
+    targets = light_markdown_targets(directory.parent)
+    marker_targets = (
+        (directory.parent / ".artha-decrypted", directory / ".handoff.json")
+        if targets
+        else ()
+    )
+    ignored: list[Path] = []
     try:
-        for entry in os.scandir(state_dir):
-            if not entry.is_file():
-                continue
-            name = entry.name
-            for pat in _CONFLICT_PATTERNS:
-                if pat.match(name):
-                    conflicts.append(entry.path)
-                    break
-    except OSError:
-        pass
-    return conflicts
+        from lib.config_loader import load_config
+        profile = load_config("user_profile", str(Path(ARTHA_DIR) / "config"))
+        sync = profile.get("sync", {}) if isinstance(profile, dict) else {}
+        values = sync.get("conflict_ignore", ()) if isinstance(sync, dict) else ()
+        if isinstance(values, list):
+            ignored = [
+                Path(ARTHA_DIR) / str(value)
+                for value in values
+                if isinstance(value, str)
+            ]
+    except (OSError, RuntimeError, TypeError, ValueError):
+        ignored = []
+    return [
+        str(path)
+        for path in discover_conflict_copies(
+            directory,
+            canonical_targets=(*targets, *marker_targets),
+            ignored=ignored,
+        )
+    ]
 
 def check_onedrive_conflicts() -> CheckResult:
     """P1 (DEBT-005): Detect OneDrive conflict copies in state/ directory.
@@ -220,7 +222,16 @@ def check_onedrive_conflicts() -> CheckResult:
     (e.g. ``finance-DESKTOP-ABC.md``).  These are NOT auto-merged; the
     user must diff and resolve manually.  See docs/sync-conflicts.md.
     """
-    conflicts = _detect_conflict_files(STATE_DIR)
+    from lib.sync_conflicts import ConflictScanUnknown
+
+    try:
+        conflicts = _detect_conflict_files(STATE_DIR)
+    except ConflictScanUnknown as exc:
+        return CheckResult(
+            "OneDrive conflicts", "P1", False,
+            f"⚠ Conflict status unknown: {exc}",
+            fix_hint="Restore access to state/ and re-run preflight before writing State Files.",
+        )
     if not conflicts:
         return CheckResult(
             "OneDrive conflicts", "P1", True,
@@ -231,10 +242,91 @@ def check_onedrive_conflicts() -> CheckResult:
         "OneDrive conflicts", "P1", False,
         f"⚠ {len(conflicts)} OneDrive conflict file(s) in state/: {', '.join(names)}",
         fix_hint=(
-            "Diff the files, keep the one with the later updated_at timestamp, "
-            "merge unique entries, then delete the conflict copy. "
-            "See docs/sync-conflicts.md for step-by-step instructions."
+            "Stop writes on both laptops, preserve both variants, and follow "
+            "docs/sync-conflicts.md. Do not choose by filename timestamp alone."
         ),
+    )
+
+
+def check_light_handoff() -> CheckResult:
+    """Report the local Light-mode handoff result; it never proves remote quiescence."""
+    from handoff import verify
+    from lib.light_mode import configured_cutover, effective_cutover
+
+    if effective_cutover(
+        configured=configured_cutover(Path(ARTHA_DIR)),
+        environment=os.environ.get("ARTHA_CUTOVER"),
+    ):
+        return CheckResult(
+            "Light-mode handoff",
+            "P1",
+            True,
+            "not required while authoritative Engine mode is effective",
+        )
+
+    result = verify(Path(ARTHA_DIR))
+    # An unverified handoff means read-only use until the owner confirms; it is not a NO-GO.
+    return CheckResult(
+        "Light-mode handoff",
+        "P1",
+        result.status == "verified",
+        result.message if result.status == "verified" else f"read-only until verified: {result.message}",
+        fix_hint="On the laptop you are leaving, run handoff.py seal --owner-confirmed "
+                 "after OneDrive reports up to date, then verify here before writes.",
+    )
+
+
+def check_effective_cutover() -> CheckResult:
+    """Report file, environment and effective Engine mode separately."""
+    from lib.light_mode import configured_cutover, describe_cutover
+
+    description = describe_cutover(
+        configured=configured_cutover(Path(ARTHA_DIR)),
+        environment=os.environ.get("ARTHA_CUTOVER"),
+    )
+    return CheckResult("Effective Engine mode", "P1", True, str(description["detail"]))
+
+
+def check_sensitive_file_registry() -> CheckResult:
+    """Report divergence between vault, domain and hook sensitive-file lists."""
+    import foundation
+    import tool_guard
+    from lib.config_loader import load_config
+
+    vault_domains = set(foundation.get_sensitive_domains())
+    try:
+        registry = load_config(
+            "domain_registry",
+            str(Path(ARTHA_DIR) / "config"),
+        )
+        domains = registry.get("domains", {}) if isinstance(registry, dict) else {}
+        domain_vaulted = {
+            str(name)
+            for name, settings in domains.items()
+            if isinstance(settings, dict) and settings.get("requires_vault") is True
+        }
+    except (OSError, RuntimeError, TypeError, UnicodeDecodeError, ValueError):
+        return CheckResult(
+            "Sensitive State File registry",
+            "P1",
+            False,
+            "domain registry could not be read",
+            fix_hint="Repair config/domain_registry.yaml before enabling Light mode.",
+        )
+    hook_domains = set(tool_guard._domains())
+    differences = []
+    if missing := sorted(domain_vaulted - vault_domains):
+        differences.append("missing from foundation: " + ", ".join(missing))
+    if missing := sorted(vault_domains - domain_vaulted):
+        differences.append("domain registry does not require vault: " + ", ".join(missing))
+    if missing := sorted(vault_domains - hook_domains):
+        differences.append("missing from tool guard: " + ", ".join(missing))
+    return CheckResult(
+        "Sensitive State File registry",
+        "P1",
+        not differences,
+        "lists agree" if not differences else "; ".join(differences),
+        fix_hint="Reconcile foundation.SENSITIVE_FILES, domain_registry.yaml and tool_guard.",
     )
 
 def check_work_health_kusto_auth() -> CheckResult:
@@ -1072,9 +1164,9 @@ def check_guardrails_rings() -> CheckResult:
         )
 
 def _clear_stale_pipeline_checkpoint() -> None:
-    """Delete state/checkpoint.json if it is older than 4 hours.
+    """Delete the machine-local pipeline checkpoint if it is older than 4 hours.
 
-    pipeline.py writes state/checkpoint.json after each fetch phase and
+    pipeline.py writes ~/.artha-local/pipeline-checkpoint.json after each fetch phase and
     prints a resume prompt on every subsequent run regardless of age.
     Clearing it here ensures every preflight-gated run starts fresh unless
     the user explicitly passed --resume to pipeline.py.
@@ -1082,7 +1174,7 @@ def _clear_stale_pipeline_checkpoint() -> None:
     if _READ_ONLY:
         return
 
-    ckpt = pathlib.Path(ARTHA_DIR) / "state" / "checkpoint.json"
+    ckpt = local_dir() / "pipeline-checkpoint.json"
     if not ckpt.exists():
         return
     try:

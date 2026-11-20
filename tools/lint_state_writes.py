@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ratcheted ban on direct ``.write_text()`` calls outside the state writers.
+"""Ratcheted ban on direct State File publication primitives.
 
 The legacy check (a ``grep`` in the Makefile) has been red for a long time
 because the incumbent code base contains ~160 direct writes.  A permanently
@@ -21,9 +21,17 @@ from pathlib import Path
 
 ALLOWED_FILES = {
     "scripts/lib/state_writer.py",
-    "scripts/lib/health_check_writer.py",
+    "scripts/health_check_writer.py",
+    "scripts/catchup_core/vault.py",
+    "scripts/handoff.py",
+    "scripts/lib/write_refusals.py",
+    "scripts/state_restore.py",
 }
-PATTERN = re.compile(r"\.write_text\(")
+PATTERN = re.compile(
+    r"\.write_text\(|\.write_bytes\(|"
+    r"\bopen\([^)\n]*,\s*[\"'][^\"']*[wax+][^\"']*[\"']|"
+    r"\bos\.(?:replace|rename)\(|\bage_encrypt\("
+)
 TMP_ON_LINE = re.compile(r"\.write_text.*tmp/")
 BASELINE = Path(__file__).resolve().parent / "baselines" / "state_writes.json"
 
@@ -80,14 +88,14 @@ def main(argv: list[str]) -> int:
         return 1
     regressions, improvements = compare(current, baseline)
     if regressions:
-        print("FAIL: new direct .write_text() calls - route state writes through "
+        print("FAIL: new direct write calls - route state writes through "
               "state_writer.write(), tmp writes through state_writer.write_atomic():")
         print("\n".join(f"  {r}" for r in regressions))
         return 1
     if improvements:
         print("note: counts dropped - run `python tools/lint_state_writes.py --update-baseline` to ratchet:")
         print("\n".join(f"  {i}" for i in improvements))
-    print(f"OK: No new direct .write_text() calls ({sum(current.values())} legacy, baseline {sum(baseline.values())})")
+    print(f"OK: No new direct write calls ({sum(current.values())} legacy, baseline {sum(baseline.values())})")
     return 0
 
 

@@ -47,7 +47,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from lib.local_paths import audit_log_path
+from lib.local_paths import audit_log_path, local_dir
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -67,7 +67,7 @@ CONFIG_DIR = _REPO_ROOT / "config"
 HEALTH_CHECK_FILE = STATE_DIR / "health-check.md"
 CATCH_UP_RUNS_FILE = STATE_DIR / "catch_up_runs.yaml"
 CONNECTOR_LOG_FILE = TMP_DIR / "connector_health_log.md"
-LOCK_FILE = STATE_DIR / ".artha-lock"
+LOCK_FILE = local_dir() / "health-check.lock"
 
 _CONNECTOR_HEALTH_RE = re.compile(r"^## Connector health —")
 _CATCH_UP_ENTRY_RE = re.compile(r"^## (Health Catch-up|Connector health) —")
@@ -142,6 +142,14 @@ def _read_or_init() -> str:
     if template.exists():
         return template.read_text(encoding="utf-8")
     return "---\nschema_version: '1.1'\nlast_catch_up: never\ncatch_up_count: 0\n---\n\n## Catch-Up Run History\n\n## Connector Health\n"
+
+
+def _read_or_init_versioned() -> tuple[str, object]:
+    from lib.state_writer import create_if_absent_token, read_versioned
+
+    if HEALTH_CHECK_FILE.exists():
+        return read_versioned(HEALTH_CHECK_FILE)
+    return _read_or_init(), create_if_absent_token(HEALTH_CHECK_FILE)
 
 
 def _update_frontmatter(content: str, updates: dict[str, object]) -> str:
@@ -590,12 +598,47 @@ def write_health_check(
         )
         return 0  # Non-fatal
 
+    from lib.write_refusals import (
+        RefusalStateUnknown,
+        list_refusals,
+        record_refusal,
+        refusal_fence,
+    )
+    refusal_guard = refusal_fence()
+    refusal_guard.__enter__()
     try:
-        content = _read_or_init()
+        if last_catch_up:
+            try:
+                refusals = list_refusals(fenced=True)
+            except RefusalStateUnknown as exc:
+                print(f"[health_check_writer] REFUSED: {exc}", file=sys.stderr)
+                return 20
+            if refusals:
+                print(
+                    f"[health_check_writer] REFUSED: {len(refusals)} State File write refusal(s) "
+                    "remain uninspected; last_catch_up was not advanced.",
+                    file=sys.stderr,
+                )
+                return 20
+        content, expected_token = _read_or_init_versioned()
+        if _BOOTSTRAP_STUB_RE.search(content):
+            template = STATE_DIR / "templates" / "health-check.md"
+            content = (
+                template.read_text(encoding="utf-8")
+                if template.exists()
+                else "---\nschema_version: '1.1'\nlast_catch_up: never\ncatch_up_count: 0\n---\n\n"
+                     "## Catch-Up Run History\n\n## Connector Health\n"
+            )
         content = _rotate_connector_logs(content)
 
         # Build frontmatter updates
         updates: dict[str, object] = {}
+        updates.setdefault("schema_version", "1.1")
+        updates.setdefault(
+            "last_updated",
+            (last_catch_up or datetime.now(timezone.utc).isoformat())[:10],
+        )
+        updates.setdefault("domain", "health-check")
         if last_catch_up:
             updates["last_catch_up"] = last_catch_up
         if email_count is not None:
@@ -618,18 +661,35 @@ def write_health_check(
 
         content = _update_frontmatter(content, updates)
 
-        # Atomic write via tmp file
-        TMP_DIR.mkdir(exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(
-            dir=STATE_DIR, prefix=".health-check-", suffix=".tmp"
-        )
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(content)
-            os.replace(tmp_path, HEALTH_CHECK_FILE)
-        except Exception:
-            os.unlink(tmp_path)
-            raise
+            from lib.state_writer import StateWriteConflict, write as state_write
+
+            result = state_write(
+                HEALTH_CHECK_FILE,
+                content,
+                domain="health-check",
+                source="health_check_writer",
+                expected_token=expected_token,
+                pii_check=False,
+                snapshot=HEALTH_CHECK_FILE.resolve().is_relative_to(_REPO_ROOT),
+                _refusal_recording=False,
+            )
+            if result.uncertain:
+                return 30
+            if not result.success:
+                record_refusal(
+                    HEALTH_CHECK_FILE,
+                    "; ".join(result.middleware_log[-3:]) or "health-check write refused",
+                    fenced=True,
+                )
+                return 20
+        except StateWriteConflict as exc:
+            record_refusal(HEALTH_CHECK_FILE, str(exc), fenced=True)
+            print(
+                "[health_check_writer] REFUSED: health-check.md changed or has a conflict",
+                file=sys.stderr,
+            )
+            return 20
 
         if verbose:
             print(f"[health_check_writer] ✓ Updated {HEALTH_CHECK_FILE}", file=sys.stderr)
@@ -677,6 +737,7 @@ def write_health_check(
         print(f"[health_check_writer] ERROR: {exc}", file=sys.stderr)
         return 1
     finally:
+        refusal_guard.__exit__(*sys.exc_info())
         _release_lock()
 
 

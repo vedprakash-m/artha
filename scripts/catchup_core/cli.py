@@ -12,12 +12,15 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import os
 import sqlite3
 import sys
 import uuid
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TextIO
+
+from lib.light_mode import describe_cutover, effective_cutover
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 # Launched as a script, this package's own directory leads sys.path and its actions.py would shadow scripts/actions/.
@@ -54,7 +57,6 @@ class NotConfigured(RuntimeError):
 
 def _default_factory(request: CatchupRequest) -> Deps:
     """Real wiring: allows authoritative runs when cutover is active or configured."""
-    import os  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
 
     from catchup_core.runtime import RuntimeConfigError, build_deps, load_runtime_config  # noqa: PLC0415
@@ -62,17 +64,17 @@ def _default_factory(request: CatchupRequest) -> Deps:
 
     root = Path(__file__).resolve().parents[2]
     cfg_path = root / "config" / "catchup_core.yaml"
-    cutover = False
+    configured_cutover = False
     if cfg_path.is_file():
         try:
             cfg = load_runtime_config(cfg_path)
-            cutover = cfg.cutover
+            configured_cutover = cfg.cutover
         except Exception:  # noqa: S110
             pass
-    if os.environ.get("ARTHA_CUTOVER") == "1":
-        cutover = True
-    elif os.environ.get("ARTHA_CUTOVER") == "0":
-        cutover = False
+    cutover = effective_cutover(
+        configured=configured_cutover,
+        environment=os.environ.get("ARTHA_CUTOVER"),
+    )
 
     if request.mode is not ExecutionMode.SHADOW and not cutover:
         raise NotConfigured("authoritative runs are disabled until the pilot is cut over; use --shadow")
@@ -467,6 +469,18 @@ def _inspect(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
     import json  # noqa: PLC0415
     try:
         result = _run_inspection(args)
+        if args.command == "health":
+            root = Path(__file__).resolve().parents[2]
+            configured = False
+            try:
+                from catchup_core.runtime import load_runtime_config  # noqa: PLC0415
+                configured = load_runtime_config(root / "config" / "catchup_core.yaml").cutover
+            except (OSError, RuntimeError):
+                pass
+            result["light_mode"] = describe_cutover(
+                configured=configured,
+                environment=os.environ.get("ARTHA_CUTOVER"),
+            )
         if args.json:
             print(json.dumps(result, indent=2, default=str), file=stdout)
         else:
@@ -492,7 +506,10 @@ def _mcp(stdin: TextIO, stdout: TextIO, stderr: TextIO) -> int:
 
     def execute(namespace: argparse.Namespace) -> dict[str, Any]:
         namespace.json, namespace.actor, namespace.detail = True, None, False
-        namespace.shadow = not config.cutover                    # read what this host actually holds
+        namespace.shadow = not effective_cutover(
+            configured=config.cutover,
+            environment=os.environ.get("ARTHA_CUTOVER"),
+        )
         return _run_inspection(namespace)
     return serve(stdin, stdout, tool_runner(execute))
 

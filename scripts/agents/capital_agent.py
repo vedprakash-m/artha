@@ -116,6 +116,9 @@ def _write_vault_skipped_annotation(forecast_path: Path, generated_at: str) -> N
 
     header = (
         "---\n"
+        'schema_version: "1.0"\n'
+        "domain: finance_forecast\n"
+        f'last_updated: "{generated_at[:10]}"\n'
         f"generated_at: {generated_at}\n"
         "data_quality: VAULT_LOCKED\n"
         "vault_note: >\n"
@@ -126,8 +129,23 @@ def _write_vault_skipped_annotation(forecast_path: Path, generated_at: str) -> N
         "---\n"
     )
     body = f"\n{existing_body}\n" if existing_body else ""
-    forecast_path.parent.mkdir(parents=True, exist_ok=True)
-    forecast_path.write_text(header + body, encoding="utf-8")
+    from lib.state_writer import create_if_absent_token, read_versioned, write
+
+    expected = (
+        read_versioned(forecast_path)[1]
+        if forecast_path.exists()
+        else create_if_absent_token(forecast_path)
+    )
+    result = write(
+        forecast_path,
+        header + body,
+        domain="finance_forecast",
+        source="capital_agent",
+        expected_token=expected,
+        snapshot=False,  # derived; recover by rerunning the agent or state_guard
+    )
+    if not result.success:
+        raise RuntimeError("finance_forecast.md refusal marker could not be written")
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +348,13 @@ def _write_state_file(
     if not source_lines:
         source_lines.append("- source: state/finance.md (no parseable transaction data found)")
 
-    content = f"""# Capital Forecast
+    content = f"""---
+schema_version: "1.0"
+domain: finance_forecast
+last_updated: "{today}"
+---
+
+# Capital Forecast
 date: {today}
 
 ## 90-Day Projection
@@ -349,7 +373,23 @@ confidence: {_overall_confidence(seen_cats)}
 - generated_at: {_now_utc()}
 - session_trace_id: {run_trace}
 """
-    _STATE_FILE.write_text(content, encoding="utf-8")
+    from lib.state_writer import create_if_absent_token, read_versioned, write
+
+    expected = (
+        read_versioned(_STATE_FILE)[1]
+        if _STATE_FILE.exists()
+        else create_if_absent_token(_STATE_FILE)
+    )
+    result = write(
+        _STATE_FILE,
+        content,
+        domain="finance_forecast",
+        source="capital_agent",
+        expected_token=expected,
+        snapshot=False,  # derived; recover from source data and state_guard
+    )
+    if not result.success:
+        raise RuntimeError("finance_forecast.md write was refused")
 
 
 def _overall_confidence(seen_cats: dict[str, dict[str, Any]]) -> str:

@@ -46,6 +46,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from lib.write_refusals import RefusalStateUnknown
+
 try:
     from .state_frontmatter import field_value, split_frontmatter, with_frontmatter_fields
 except ImportError:  # scripts/lib is imported directly by legacy callers
@@ -190,6 +192,7 @@ class WriteResult:
     snapshot_path: Optional[Path] = None
     middleware_log: list[str] = field(default_factory=list)
     uncertain: bool = False
+    conflicts_after_write: list[str] = field(default_factory=list)
 
 
 def _write_unfenced(
@@ -202,6 +205,7 @@ def _write_unfenced(
     pii_check: bool = True,
     ctx: Any | None = None,
     expected_token: StateWriteToken | None = None,
+    refusal_recording: bool = True,
 ) -> WriteResult:
     """Canonical state write.  ALL ``state/*.md`` mutations MUST use this.
 
@@ -241,6 +245,20 @@ def _write_unfenced(
     result = WriteResult(path=path, success=False)
     log = result.middleware_log
     log.append(f"write called: domain={domain} source={source} path={path}")
+
+    from lib.sync_conflicts import find_conflicts
+
+    conflicts = find_conflicts(path)
+    if conflicts:
+        if refusal_recording:
+            _record_refusal(
+                path,
+                "conflict copy present: " + ", ".join(conflict.name for conflict in conflicts),
+            )
+        raise StateWriteConflict(
+            f"State File write refused: conflict copy present for {path}: "
+            + ", ".join(str(conflict) for conflict in conflicts)
+        )
 
     # ------------------------------------------------------------------ #
     # 1. Build current content (empty string for new files)               #
@@ -314,6 +332,15 @@ def _write_unfenced(
             result.uncertain = True
             log.append("ERROR: post-publication readback did not match proposed bytes")
             return result
+        result.conflicts_after_write = [
+            str(conflict) for conflict in find_conflicts(path)
+        ]
+        if result.conflicts_after_write:
+            result.uncertain = True
+            log.append(
+                "ERROR: conflict copy appeared after publication; result is uncertain"
+            )
+            return result
     except Exception as exc:  # noqa: BLE001
         if published:
             result.uncertain = True
@@ -343,12 +370,76 @@ def _write_unfenced(
 
 
 @functools.wraps(_write_unfenced)
-def write(path: Path, content: str, **kwargs: Any) -> WriteResult:
-    """Fenced State File write: refused while a checkpoint is captured and in a restored installation."""
+def write(
+    path: Path,
+    content: str,
+    *,
+    _already_fenced: bool = False,
+    **kwargs: Any,
+) -> WriteResult:
+    """Fenced State File write, with an internal escape for one atomic read/modify/write owner."""
+    def perform() -> WriteResult:
+        from lib.sync_conflicts import ConflictScanUnknown
+        refusal_recording = kwargs.pop("_refusal_recording", True)
+        try:
+            result = _write_unfenced(
+                path,
+                content,
+                refusal_recording=refusal_recording,
+                **kwargs,
+            )
+        except StateWriteConflict as exc:
+            if refusal_recording:
+                _record_refusal(Path(path), str(exc))
+            raise
+        except ConflictScanUnknown as exc:
+            if refusal_recording:
+                _record_refusal(Path(path), str(exc))
+            raise StateWriteConflict(f"State File conflict status unknown: {exc}") from exc
+        if refusal_recording and not result.success and not result.uncertain:
+            _record_refusal(
+                Path(path),
+                "; ".join(result.middleware_log[-3:]) or "State File write refused",
+            )
+        return result
+
     _ensure_scripts_on_path()
+    if _already_fenced:
+        return perform()
     from catchup_core.session_lock import publication_fence  # noqa: PLC0415
     with publication_fence(Path(path)):
-        return _write_unfenced(path, content, **kwargs)
+        return perform()
+
+
+def _record_refusal(path: Path, reason: str) -> None:
+    repository = Path(__file__).resolve().parents[2]
+    try:
+        if not Path(path).resolve().is_relative_to(repository / "state"):
+            return
+        from lib.write_refusals import record_refusal
+        record_refusal(Path(path), reason)
+    except (OSError, RefusalStateUnknown) as exc:
+        print(
+            f"[state_writer] refusal marker unavailable: {type(exc).__name__}",
+            file=sys.stderr,
+        )
+
+
+def write_current(path: Path, content: str, *, domain: str, source: str, **kwargs: Any) -> WriteResult:
+    """Write with the token read now, for whole-file writers that hold no earlier token.
+
+    The conflict check, refusal marker, atomic publication and readback still apply. A
+    stale-read race is only as narrow as the time between this read and the write.
+    Raises StateWriteConflict when refused so callers cannot treat a refusal as success.
+    """
+    path = Path(path)
+    token = read_versioned(path)[1] if path.exists() else create_if_absent_token(path)
+    kwargs.setdefault("pii_check", False)
+    kwargs.setdefault("snapshot", path.resolve().is_relative_to(Path(__file__).resolve().parents[2]))
+    result = write(path, content, domain=domain, source=source, expected_token=token, **kwargs)
+    if result.uncertain or not result.success:
+        raise StateWriteConflict(f"{path.name} write was not committed: " + "; ".join(result.middleware_log[-2:]))
+    return result
 
 
 def write_atomic(path: Path, content: str, **_kwargs: Any) -> WriteResult:
@@ -433,7 +524,7 @@ def _snapshot_current(path: Path, domain: str, content: str) -> Path | None:
         root = path.parent
     else:
         root = repository
-    return snapshot(domain, content, artha_dir=root)
+    return snapshot(domain, content, artha_dir=root, target=path)
 
 
 def _assert_expected_token(path: Path, expected: StateWriteToken) -> None:

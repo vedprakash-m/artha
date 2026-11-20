@@ -40,7 +40,7 @@ import requests
 import yaml
 
 from lib.config_loader import load_config
-from lib.local_paths import audit_log_path
+from lib.local_paths import audit_log_path, local_dir
 
 log = logging.getLogger("export_hermes_context")
 
@@ -391,7 +391,7 @@ def export_hermes_context(
 
     # Standalone mode: defer if pipeline is currently writing state files
     if standalone:
-        sentinel = artha_dir / "tmp" / ".pipeline_running"
+        sentinel = local_dir() / "pipeline-running.lock"
         if sentinel.exists():
             age_s = time.time() - sentinel.stat().st_mtime
             if age_s < 3600:

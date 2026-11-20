@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import json
 
 import pytest
 
@@ -12,7 +13,12 @@ from lib import sealed_state
 def _fake(monkeypatch, calls, returncode=0, stdout="body"):
     def run(argv, **kwargs):
         calls.append((argv, kwargs.get("input")))
-        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr="")
+        output = (
+            json.dumps({"content": stdout, "revision": "a" * 64})
+            if "--json" in argv
+            else stdout
+        )
+        return SimpleNamespace(returncode=returncode, stdout=output, stderr="")
     monkeypatch.setattr(sealed_state.subprocess, "run", run)
 
 
@@ -35,8 +41,12 @@ def test_write_passes_the_text_on_stdin_and_creates_no_plaintext_file(tmp_path, 
     calls = []
     _fake(monkeypatch, calls)
     sealed_state.write_domain("finance", "new body", tmp_path)
-    argv, stdin = calls[0]
-    assert argv[-2:] == ["write", "finance"] and stdin == "new body" and not list(tmp_path.glob("*.md"))
+    read_argv, read_stdin = calls[0]
+    write_argv, write_stdin = calls[1]
+    assert read_argv[-3:] == ["read", "finance", "--json"] and read_stdin is None
+    assert write_argv[-4:-2] == ["write", "finance"]
+    assert "--expected-revision" in write_argv and "a" * 64 in write_argv
+    assert write_stdin == "new body" and not list(tmp_path.glob("*.md"))
 
 
 def test_failures_raise_and_never_fall_back_to_plaintext(tmp_path, monkeypatch):

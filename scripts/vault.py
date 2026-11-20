@@ -6,14 +6,16 @@ Python replacement for vault.sh — works on macOS, Windows, and Linux.
 Uses `keyring` for credential storage and `age` CLI for encryption.
 
 Usage:
-  python scripts/vault.py decrypt   — decrypt all .age files to plaintext .md
+  python scripts/vault.py read X    — decrypt one domain into memory
+  python scripts/vault.py write X --expected-revision REV — encrypt from stdin
+  python scripts/vault.py decrypt   — legacy bulk decrypt; refused in cloud-synced workspaces
   python scripts/vault.py encrypt   — encrypt all .md back to .age and remove plaintext
   python scripts/vault.py status    — show current encryption state
   python scripts/vault.py health    — exit 0 if vault is healthy; exit 1 otherwise
 
 Stale lock handling:
-  Lock file > 30 min old: previous session crashed uncleanly.
-  Auto-cleared and logged. Lock < 30 min: treated as active session.
+  Same-host stale markers may enter verified recovery. Foreign-host markers are
+  never PID-probed, deleted or auto-encrypted.
 
 Security model:
   - Private key lives in system credential store (macOS Keychain / Windows Credential Manager)
@@ -48,7 +50,7 @@ import sys
 import tempfile
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import keyring
@@ -124,6 +126,15 @@ def _read_lock_data() -> dict:
     return {}
 
 
+def _lock_host(lock_data: dict | None = None) -> tuple[str, str]:
+    """Return marker host and local host without probing a PID."""
+    from lib.light_mode import host_id
+
+    data = lock_data if lock_data is not None else _read_lock_data()
+    marker = str(data.get("machine") or data.get("host") or "")
+    return (host_id(marker) if marker else "", host_id())
+
+
 def _pid_running(pid: int) -> bool:
     """Return True if a process with *pid* is currently running on this machine.
     Uses POSIX os.kill(pid, 0) on Unix; falls back to subprocess on Windows."""
@@ -169,6 +180,14 @@ def check_lock_state() -> int:
     lock_age   = int(now - lock_mtime)
     lock_age_m = lock_age // 60
     pid        = lock_data.get("pid", 0)
+    marker_host, current_host = _lock_host(lock_data)
+    if marker_host and marker_host != current_host:
+        print(
+            f"⛔ vault.py: Session marker belongs to host {marker_host} "
+            f"(this host is {current_host}); its PID was not probed and the marker was not changed.",
+        )
+        log(f"DECRYPT_BLOCKED | reason: foreign_host | host: {marker_host} | age: {lock_age_m}m")
+        return 2
 
     # Hard TTL: 30 min — stale regardless of PID
     hard_stale = lock_age > LOCK_TTL
@@ -209,7 +228,7 @@ def check_lock_state() -> int:
     print(f"⛔ vault.py: Active session lock detected (age: {lock_age_m}m{pid_str}).")
     print("  Another catch-up session may be in progress.")
     print("  Halt: running a duplicate session could corrupt state.")
-    if pid and _pid_running(pid):
+    if (not marker_host or marker_host == current_host) and pid and _pid_running(pid):
         print(f"  Process {pid} is still running.")
     elif pid:
         print(f"  Process {pid} is no longer running — lock may be stale.")
@@ -220,7 +239,7 @@ def check_lock_state() -> int:
     return 2
 
 
-def do_release_lock(force: bool = True) -> None:
+def do_release_lock(force: bool = True, expected_host: str | None = None) -> None:
     """Force-clear a stale session lock file (manual recovery command).
 
     Used when a previous catch-up session crashed while holding the lock,
@@ -237,8 +256,16 @@ def do_release_lock(force: bool = True) -> None:
     lock_age_m = int((time.time() - lock_mtime) / 60)
     pid        = lock_data.get("pid", 0)
     ts         = lock_data.get("timestamp", "unknown")
+    marker_host, current_host = _lock_host(lock_data)
+    if marker_host and marker_host != current_host and expected_host != marker_host:
+        print(
+            f"vault.py release-lock: marker belongs to {marker_host}, not {current_host}. "
+            "Use `release-lock --host <exact-host>` from an owner terminal after inspection.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
-    if pid and _pid_running(pid):
+    if (not marker_host or marker_host == current_host) and pid and _pid_running(pid):
         print(f"WARNING: Process {pid} (started {ts}) is still running.")
         print("  Releasing the lock while a live session is active could corrupt state.")
         print("  Only proceed if you are certain that session is defunct.")
@@ -404,6 +431,11 @@ _op_fence = None
 _op_lock_owner = threading.local()
 
 
+def _operation_lock_path() -> Path:
+    from lib.local_paths import local_dir
+    return local_dir() / "vault-operation.lock"
+
+
 def _acquire_op_lock() -> bool:
     """Acquire OS-level advisory lock. Returns True if acquired.
 
@@ -416,7 +448,7 @@ def _acquire_op_lock() -> bool:
     if depth:
         _op_lock_owner.depth = depth + 1
         return True
-    lock_path = _config["ARTHA_DIR"] / ".artha-op-lock"
+    lock_path = _operation_lock_path()
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     # Share the installation fence so a full-state checkpoint never captures a half-encrypted State File set.
     from contextlib import ExitStack  # noqa: PLC0415
@@ -502,8 +534,30 @@ _CLOUD_SYNC_MARKERS = ("CloudStorage", "OneDrive", "Dropbox", "Google Drive", "i
 
 
 def _is_cloud_synced() -> bool:
-    """Return True if the Artha workspace is inside a cloud-synced folder."""
-    return any(m in str(_config["ARTHA_DIR"]) for m in _CLOUD_SYNC_MARKERS)
+    """Return True when the workspace is actually inside a known cloud-sync root."""
+    workspace = Path(_config["ARTHA_DIR"]).expanduser().resolve()
+    home = Path.home().resolve()
+    roots = [
+        home / "OneDrive",
+        home / "Dropbox",
+        home / "Library" / "CloudStorage",
+        home / "Library" / "Mobile Documents",
+        home / "Google Drive",
+        home / "iCloud",
+    ]
+    roots.extend(
+        Path(value).expanduser().resolve()
+        for name in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial")
+        if (value := os.environ.get(name))
+    )
+    return (
+        any(workspace == root or workspace.is_relative_to(root) for root in roots)
+        or any(marker in workspace.parts for marker in _CLOUD_SYNC_MARKERS)
+        or any(
+            marker in workspace.as_posix()
+            for marker in ("OneDrive -", "OneDriveCommercial", "OneDriveConsumer")
+        )
+    )
 
 
 def _check_sync_fence() -> bool:
@@ -562,7 +616,7 @@ def _check_sync_fence() -> bool:
     print(
         f"[VAULT-WARN] OneDrive sync appears incomplete after {timeout_sec}s. "
         "Proceeding — decrypt may fail if sync is in-flight. "
-        "Re-run `python scripts/vault.py decrypt` if errors occur.",
+        "Re-run the read or write if errors occur.",
         file=sys.stderr,
     )
     return False
@@ -680,6 +734,11 @@ def do_decrypt() -> None:
     Corrupt .age files (invalid header / tiny stubs) are quarantined and
     skipped — they do not block decryption of healthy files.
     """
+    if _is_cloud_synced():
+        die(
+            "bulk vault decrypt is refused inside a cloud-synced workspace; "
+            "use `vault.py read` and `vault.py write` for in-memory access"
+        )
     _ensure_encryption_ready()  # transparent first-run setup (Part VII)
     if not check_age_installed():
         die("'age' encryption tool not found. Install it:\n"
@@ -790,8 +849,11 @@ def do_decrypt() -> None:
     lock_data = {
         "pid":       os.getpid(),
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "expires_at": (
+            datetime.now(timezone.utc) + timedelta(seconds=LOCK_TTL)
+        ).isoformat(timespec="seconds"),
         "operation": "decrypt",
-        "machine":   _socket.gethostname(),  # RD-14: machine identity for conflict detection
+        "machine":   _socket.gethostname().split(".", 1)[0],  # RD-14: machine identity for conflict detection
     }
     lock_content = json.dumps(lock_data) + "\n"
     lock_dir = LOCK_FILE.parent
@@ -1035,27 +1097,24 @@ def do_encrypt() -> None:
             "  macOS: brew install age\n"
             "  Windows: winget install FiloSottile.age  (or scoop install age)")
 
-    # RD-14: Machine conflict detection — check if lock was created by this machine
+    # RD-14: Never mutate vault state owned by another host's marker.
+    # CONCURRENT_VAULT_WARNING is retired: foreign markers now block with ENCRYPT_BLOCKED.
     try:
-        import socket as _socket  # noqa: PLC0415
         lock_data = _read_lock_data()
-        lock_machine = lock_data.get("machine", "")
-        current_machine = _socket.gethostname()
+        lock_machine, current_machine = _lock_host(lock_data)
         if lock_machine and lock_machine != current_machine:
             log(
-                f"CONCURRENT_VAULT_WARNING | lock_machine:{lock_machine} | "
-                f"current_machine:{current_machine} | pid:{os.getpid()} | "
-                f"risk:concurrent_write_last_writer_wins"
+                f"ENCRYPT_BLOCKED | reason:foreign_host | lock_machine:{lock_machine} | "
+                f"current_machine:{current_machine}"
             )
-            print(
-                f"[VAULT-WARN] Concurrent write detected: lock was created by machine "
-                f"'{lock_machine}', but this is '{current_machine}'. "
-                f"If both machines modified state/, the last to encrypt wins — "
-                f"manual reconciliation may be required. See audit.md for details.",
-                file=sys.stderr,
+            die(
+                f"cannot encrypt while session marker belongs to {lock_machine}; "
+                "inspect and force-release that exact host first"
             )
-    except Exception:  # noqa: BLE001
-        pass  # Machine check is best-effort; never block encrypt
+    except SystemExit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        die(f"session marker could not be validated: {type(exc).__name__}")
 
     try:
         pubkey = get_public_key()
@@ -1274,6 +1333,16 @@ def do_auto_lock() -> int:
         print("vault.py auto-lock: No lock file — vault already locked. Nothing to do.")
         return 1
 
+    marker_host, current_host = _lock_host()
+    if marker_host and marker_host != current_host:
+        print(
+            f"vault.py auto-lock: marker belongs to {marker_host}; "
+            f"this host ({current_host}) did not probe or change it.",
+            file=sys.stderr,
+        )
+        log(f"AUTO_LOCK_REFUSED | reason: foreign_host | host: {marker_host}")
+        return 2
+
     lock_mtime = os.path.getmtime(LOCK_FILE)
     lock_age = int(time.time() - lock_mtime)
     ttl = LOCK_TTL  # 30 min by default
@@ -1339,11 +1408,13 @@ def do_health() -> None:
         ok = False
 
     # 2. Private key retrievable and well-formed (#3)
+    native_key = ""
     try:
         key = keyring.get_password(KC_SERVICE, KC_ACCOUNT)
         if key:
             if key.strip().startswith("AGE-SECRET-KEY-"):
                 print("  Credential store key: ✓ present (valid format)")
+                native_key = key
             else:
                 print("  Credential store key: ⚠ present but INVALID FORMAT (expected AGE-SECRET-KEY-...)")
                 ok = False
@@ -1355,12 +1426,37 @@ def do_health() -> None:
         ok = False
 
     # 3. Public key readable
+    pubkey = ""
     try:
         pubkey = get_public_key()
         print(f"  Public key:   ✓ {pubkey[:20]}...")
     except SystemExit:
         print("  Public key:   ✗ NOT found — set encryption.age_recipient in config/user_profile.yaml")
         ok = False
+
+    # 3b. Prove the native-store identity matches the configured recipient.
+    if native_key and pubkey and check_age_installed():
+        import tempfile as _tempfile
+        from catchup_core.vault import AgeVault
+        try:
+            with _tempfile.TemporaryDirectory(prefix="artha-vault-health-") as directory:
+                probe_dir = Path(directory)
+                probe_vault = AgeVault(
+                    probe_dir,
+                    identity=lambda: native_key,
+                    recipient=pubkey,
+                )
+                probe = probe_dir / "probe.md.age"
+                probe.write_bytes(probe_vault.encrypt_artifact("artha-health-probe"))
+                if probe_vault.read_artifact(probe) != "artha-health-probe":
+                    raise RuntimeError("probe mismatch")
+            print("  Native key pair: ✓ synthetic in-memory round trip")
+        except TypeError:
+            print("  Native key pair: ⚠ synthetic probe unavailable in this test/runtime")
+            soft_warn = True
+        except Exception as exc:
+            print(f"  Native key pair: ✗ round trip failed ({type(exc).__name__})")
+            ok = False
 
     # 4. State directory accessible
     if STATE_DIR.is_dir() and os.access(STATE_DIR, os.W_OK):
@@ -1439,9 +1535,10 @@ def _print_usage(exit_code: int = 1) -> None:
     print("Usage: vault.py {decrypt|encrypt|status|health|store-key|release-lock|auto-lock}")
     print("       backup commands → python scripts/backup.py {snapshot|status|validate|restore|install|…}")
     print()
-    print("  decrypt      — write plaintext State Files to disk; only with --offline-edit (use read/write instead)")
+    print("  decrypt      — legacy bulk decrypt; refused inside cloud-synced workspaces (prefer read/write)")
     print("  encrypt      — lock sensitive state files after catch-up + GFS backup")
-    print("  read <dom>   — decrypt and print domain in-memory via AgeVault (never touches disk)")
+    print("      read <dom> [--json] — decrypt in memory; --json also returns the CAS revision")
+    print("  read-file <path> — owner-terminal in-memory read of an approved .age conflict artifact")
     print("  status       — show current encryption state (read-only)")
     print("  health       — exit 0 if vault is healthy; exit 1 otherwise (for preflight)")
     print("  store-key    — store age private key from a file into the OS credential store")
@@ -1450,29 +1547,70 @@ def _print_usage(exit_code: int = 1) -> None:
     sys.exit(exit_code)
 
 
-def do_read(domain: str, *, state_dir: Path | None = None) -> None:
+def do_read(domain: str, *, state_dir: Path | None = None, json_output: bool = False) -> None:
     """Read and decrypt one domain in-memory via AgeVault (never touches disk)."""
     try:
         from catchup_core.vault import AgeVault
         key = get_private_key()
         pub = get_public_key()
         vault = AgeVault(state_dir or STATE_DIR, identity=lambda: key, recipient=pub)
-        content = vault.read(domain)
-        sys.stdout.write(content)
+        if json_output:
+            content, revision = vault.read_versioned(domain)
+            import json as _json
+            sys.stdout.write(_json.dumps({"content": content, "revision": revision}, ensure_ascii=False))
+        else:
+            sys.stdout.write(vault.read(domain))
     except Exception as exc:
         print(f"Error reading {domain}: {exc}", file=sys.stderr)
         sys.exit(1)
 
 
-def do_write(domain: str) -> None:
-    """Encrypt stdin as one domain in memory (validated, versioned, atomic); no plaintext file is created."""
+def do_read_file(path: str) -> None:
+    """Owner-terminal in-memory read of one encrypted conflict artifact."""
+    if not sys.stdout.isatty():
+        print(
+            "read-file is owner-terminal only; use vault.py read <domain> for agent surfaces",
+            file=sys.stderr,
+        )
+        sys.exit(20)
+    from catchup_core.vault import AgeVault
+    from lib.local_paths import local_dir
+
+    selected = Path(path).expanduser().resolve()
+    allowed = (
+        STATE_DIR.resolve(),
+        (local_dir() / "conflict-quarantine").resolve(),
+    )
+    if not any(selected.is_relative_to(root) for root in allowed):
+        print("read-file path is outside the permitted state/conflict locations", file=sys.stderr)
+        sys.exit(20)
+    if not selected.name.endswith(".age") or not selected.is_file():
+        print("read-file requires an existing .age artifact", file=sys.stderr)
+        sys.exit(20)
+    key, pub = get_private_key(), get_public_key()
+    reader = AgeVault(selected.parent, identity=lambda: key, recipient=pub)
     try:
-        from catchup_core.vault import AgeVault
+        sys.stdout.write(reader.read_artifact(selected))
+    except Exception as exc:
+        print(f"encrypted artifact read failed: {type(exc).__name__}", file=sys.stderr)
+        sys.exit(1)
+
+
+def do_write(domain: str, *, expected_revision: str) -> None:
+    """Encrypt stdin as one domain in memory (validated, versioned, atomic); no plaintext file is created."""
+    from catchup_core.vault import AgeVault, VaultError, VaultUncertain
+    try:
         pub = get_public_key()
         key = get_private_key()          # needed to validate the replacement against the previous version
         vault = AgeVault(STATE_DIR, identity=lambda: key, recipient=pub)
-        path = vault.write(domain, sys.stdin.read())
-        print(f"wrote {path.name}")
+        path = vault.write(domain, sys.stdin.read(), expected_revision=expected_revision)
+        print(f"committed {path.name}")
+    except VaultUncertain as exc:
+        print(f"uncertain: {exc}", file=sys.stderr)
+        sys.exit(30)
+    except VaultError as exc:  # conflict, stale revision, key unavailable, destructive write: AgeVault recorded it
+        print(f"refused: {exc}", file=sys.stderr)
+        sys.exit(20)
     except Exception as exc:
         print(f"Error writing {domain}: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -1486,10 +1624,12 @@ def main() -> None:
     if cmd in ("--help", "-h", "help"):
         _print_usage(exit_code=0)
     if cmd == "decrypt":
-        if "--offline-edit" not in sys.argv[2:]:
-            print("vault.py decrypt writes plaintext State Files to disk (which may sync) and is only for offline "
-                  "editing: pass --offline-edit.\nTo read a domain use `vault.py read <domain>`; to change one use "
-                  "`vault.py write <domain>`.", file=sys.stderr)
+        if len(sys.argv) > 2:
+            print(
+                "vault.py decrypt no longer accepts --offline-edit; use `vault.py read` "
+                "and `vault.py write` instead.",
+                file=sys.stderr,
+            )
             sys.exit(2)
         do_decrypt()
     elif cmd == "encrypt":
@@ -1499,22 +1639,38 @@ def main() -> None:
     elif cmd == "health":
         do_health()
     elif cmd == "write":
-        if len(sys.argv) < 3:
-            print("Usage: vault.py write <domain>   (new content on stdin)", file=sys.stderr)
-            sys.exit(1)
-        do_write(sys.argv[2])
+        args = sys.argv[3:]
+        if len(sys.argv) < 3 or len(args) != 2 or args[0] != "--expected-revision":
+            print(
+                "Usage: vault.py write <domain> --expected-revision <token> "
+                "(new content on stdin)",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        do_write(sys.argv[2], expected_revision=args[1])
     elif cmd in ("read", "cat"):
         if len(sys.argv) < 3:
             print("Usage: vault.py read <domain>", file=sys.stderr)
             sys.exit(1)
         selected_state_dir = None
         args = sys.argv[3:]
-        if args:
-            if len(args) != 2 or args[0] != "--state-dir":
-                print("Usage: vault.py read <domain> [--state-dir PATH]", file=sys.stderr)
-                sys.exit(1)
-            selected_state_dir = Path(args[1])
-        do_read(sys.argv[2], state_dir=selected_state_dir)
+        json_output = False
+        while args:
+            if args[0] == "--state-dir" and len(args) >= 2:
+                selected_state_dir = Path(args[1])
+                args = args[2:]
+            elif args[0] == "--json":
+                json_output = True
+                args = args[1:]
+            else:
+                print("Usage: vault.py read <domain> [--json] [--state-dir PATH]", file=sys.stderr)
+                sys.exit(2)
+        do_read(sys.argv[2], state_dir=selected_state_dir, json_output=json_output)
+    elif cmd == "read-file":
+        if len(sys.argv) != 3:
+            print("Usage: vault.py read-file <path-to-age-artifact>", file=sys.stderr)
+            sys.exit(2)
+        do_read_file(sys.argv[2])
     elif cmd in ("store-key", "store_key"):
         if len(sys.argv) < 3:
             print("Usage: vault.py store-key <keyfile>", file=sys.stderr)
@@ -1583,7 +1739,14 @@ def main() -> None:
         from backup import do_install as _bkp_install
         _bkp_install(zip_arg, dry_run=dry_run, data_only=data_only, confirm=confirm)
     elif cmd in ("release-lock", "release_lock", "--release-lock"):
-        do_release_lock()
+        args = sys.argv[2:]
+        expected_host = None
+        if args:
+            if len(args) != 2 or args[0] != "--host":
+                print("Usage: vault.py release-lock [--host EXACT_HOST]", file=sys.stderr)
+                sys.exit(2)
+            expected_host = args[1]
+        do_release_lock(expected_host=expected_host)
     elif cmd in ("auto-lock", "auto_lock"):
         sys.exit(do_auto_lock())
     elif cmd in ("watchdog",):
@@ -1691,7 +1854,7 @@ def check_file_readable(filepath: str) -> dict:
             "readable": False,
             "path": result_path,
             "reason": "empty_placeholder",
-            "hint": "File is empty. Vault may be locked. Run: python scripts/vault.py decrypt",
+            "hint": "File is empty. Vault may be locked. Run: python scripts/vault.py read <domain>",
         }
 
     # 2. Very small file — likely a stub/placeholder written by vault.py when locked
@@ -1704,7 +1867,7 @@ def check_file_readable(filepath: str) -> dict:
                 "reason": "locked_placeholder",
                 "hint": (
                     f"File is {size} bytes (too small to be meaningful). "
-                    "Vault appears locked. Run: python scripts/vault.py decrypt"
+                    "Vault appears locked. Run: python scripts/vault.py read <domain>"
                 ),
             }
 
@@ -1731,7 +1894,7 @@ def check_file_readable(filepath: str) -> dict:
                     "readable": False,
                     "path": result_path,
                     "reason": "encrypted_ciphertext",
-                    "hint": "File contains encrypted data (not decrypted). Run: python scripts/vault.py decrypt",
+                    "hint": "File contains encrypted data (not decrypted). Run: python scripts/vault.py read <domain>",
                 }
     except OSError:
         pass  # File readable check: if we can't read it, report not readable

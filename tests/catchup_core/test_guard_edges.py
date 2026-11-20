@@ -139,12 +139,40 @@ def test_authoritative_default_factory_passes_provider_loaders_but_shadow_does_n
     from catchup_core.contracts import CatchupRequest, ExecutionMode
     seen = []
     monkeypatch.setenv("ARTHA_CUTOVER", "1")
+    monkeypatch.setattr(cli, "effective_cutover", lambda **_kwargs: True)
     monkeypatch.setattr(runtime, "_default_loaders", lambda: ("H", "A"))
     monkeypatch.setattr(runtime, "build_deps", lambda request, **kw: seen.append((request.mode, kw)) or "deps")
     for mode in (ExecutionMode.AUTHORITATIVE, ExecutionMode.SHADOW):
         assert cli._default_factory(CatchupRequest("cu_x", "owner", "cli", mode=mode, host="h")) == "deps"
     assert seen == [(ExecutionMode.AUTHORITATIVE, {"handler_loader": "H", "auth_loader": "A"}),
                     (ExecutionMode.SHADOW, {})]
+
+
+def test_default_factory_uses_configured_light_mode_when_config_load_fails(monkeypatch):
+    from catchup_core.contracts import CatchupRequest, ExecutionMode
+    from catchup_core import runtime
+
+    monkeypatch.delenv("ARTHA_CUTOVER", raising=False)
+    monkeypatch.setattr(runtime, "load_runtime_config", lambda _path: (_ for _ in ()).throw(
+        runtime.RuntimeConfigError("synthetic")
+    ))
+    with pytest.raises(cli.NotConfigured, match="disabled"):
+        cli._default_factory(
+            CatchupRequest("cu_x", "owner", "cli", mode=ExecutionMode.AUTHORITATIVE, host="h")
+        )
+
+
+def test_health_inspection_reports_light_mode_when_config_load_fails(monkeypatch):
+    from catchup_core import runtime
+
+    monkeypatch.setattr(cli, "_run_inspection", lambda _args: {"ok": True})
+    monkeypatch.setattr(runtime, "load_runtime_config", lambda _path: (_ for _ in ()).throw(
+        runtime.RuntimeConfigError("synthetic")
+    ))
+    args = types.SimpleNamespace(command="health", json=True)
+    stdout, stderr = io.StringIO(), io.StringIO()
+    assert cli._inspect(args, stdout, stderr) == 0
+    assert json.loads(stdout.getvalue())["light_mode"]["enabled"] is False
 
 
 def test_bundle_enroll_command_prints_the_secret_once_and_export_demands_configuration(monkeypatch):

@@ -39,7 +39,8 @@ from lib.local_paths import audit_log_path
 # Paths
 # ---------------------------------------------------------------------------
 
-_ARTHA_DIR = Path(__file__).resolve().parents[2]
+_CODE_ROOT = Path(__file__).resolve().parents[2]
+_ARTHA_DIR = _CODE_ROOT
 _BRIEFINGS_DIR = _ARTHA_DIR / "briefings"
 _STATE_DIR = _ARTHA_DIR / "state"
 _TMP_DIR = _ARTHA_DIR / "tmp"
@@ -119,17 +120,31 @@ def _increment_health_counter(counter_key: str) -> None:
     try:
         if not _HEALTH_CHECK.exists():
             return
-        content = _HEALTH_CHECK.read_text(encoding="utf-8")
+        from lib.state_writer import read_versioned, write
+        content, expected_token = read_versioned(_HEALTH_CHECK)
+        if not content.startswith("---"):
+            content = (
+                "---\nschema_version: '1.0'\ndomain: health-check\n"
+                "last_updated: 'unknown'\n---\n" + content
+            )
         pattern = re.compile(r"^(" + re.escape(counter_key) + r":\s*)(\d+)", re.MULTILINE)
         m = pattern.search(content)
         if m:
             new_val = int(m.group(2)) + 1
             new_content = content[: m.start(2)] + str(new_val) + content[m.end(2):]
-            _HEALTH_CHECK.write_text(new_content, encoding="utf-8")
         else:
             # Append as a new counter line
             sep = "\n" if content.endswith("\n") else "\n\n"
-            _HEALTH_CHECK.write_text(content + sep + f"{counter_key}: 1\n", encoding="utf-8")
+            new_content = content + sep + f"{counter_key}: 1\n"
+        write(
+            _HEALTH_CHECK,
+            new_content,
+            domain="health-check",
+            source="briefing_archive",
+            expected_token=expected_token,
+            pii_check=False,
+            snapshot=_HEALTH_CHECK.resolve().is_relative_to(_CODE_ROOT),
+        )
     except Exception:  # noqa: BLE001
         pass
 
@@ -147,7 +162,13 @@ class _FileLock:
 
     def __init__(self, path: Path) -> None:
         self._target = path
-        self._lock_path = path.with_suffix(path.suffix + ".lock")
+        if path.resolve().is_relative_to(_CODE_ROOT):
+            from lib.local_paths import local_dir
+            identity = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()
+            self._lock_path = local_dir() / "archive-locks" / f"{identity}.lock"
+        else:
+            self._lock_path = path.with_suffix(path.suffix + ".lock")
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = None
         self._use_sentinel = sys.platform == "win32"
 

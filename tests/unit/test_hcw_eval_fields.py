@@ -37,6 +37,14 @@ def hcw():
     return _load_module("health_check_writer", _SCRIPTS_DIR / "health_check_writer.py")
 
 
+@pytest.fixture(autouse=True)
+def isolated_write_refusals(tmp_path, monkeypatch):
+    from lib import write_refusals
+
+    marker = tmp_path / "write-refusals.json"
+    monkeypatch.setattr(write_refusals, "refusal_path", lambda: marker)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -321,6 +329,26 @@ def test_ev3_14_stale_lock_removed_and_acquired(tmp_path, hcw):
 
 
 class TestHealthCheckWriterFrontmatter:
+    def test_unreadable_write_refusal_marker_blocks_watermark(
+        self, tmp_path, monkeypatch, hcw
+    ):
+        hc = tmp_path / "health-check.md"
+        lock = tmp_path / ".artha-lock"
+        hc.write_text(
+            "---\nschema_version: '1.1'\ndomain: health-check\n"
+            "last_updated: '2026-11-19'\nlast_catch_up: never\ncatch_up_count: 0\n---\n"
+        )
+        from lib import write_refusals
+
+        marker = tmp_path / "write-refusals.json"
+        marker.write_text("{broken", encoding="utf-8")
+        monkeypatch.setattr(write_refusals, "refusal_path", lambda: marker)
+        monkeypatch.setattr(hcw, "HEALTH_CHECK_FILE", hc)
+        monkeypatch.setattr(hcw, "LOCK_FILE", lock)
+        monkeypatch.setattr(hcw, "STATE_DIR", hc.parent)
+
+        assert hcw.write_health_check(last_catch_up="2026-11-19T00:00:00Z") == 20
+        assert "last_catch_up: never" in hc.read_text(encoding="utf-8")
     """health_check_writer.py: atomic frontmatter updater."""
 
     def test_write_creates_file_from_template(self, tmp_path, hcw):

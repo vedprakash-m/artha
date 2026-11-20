@@ -59,9 +59,18 @@ _lib_dir = str(Path(__file__).resolve().parent / "lib")
 if _lib_dir not in sys.path:
     sys.path.insert(0, _lib_dir)
 from state_writer import write_atomic as _write_atomic  # noqa: PLC0415
+from lib.local_paths import local_dir
 
 _CHECKPOINT_FILE = "tmp/.checkpoint.json"
 _MAX_AGE_HOURS = 4  # Fallback — configurable via harness.agentic.checkpoints.stale_hours
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _checkpoint_path(artha_dir: Path) -> Path:
+    root = Path(artha_dir)
+    if root.resolve() == _PROJECT_ROOT.resolve():
+        return local_dir() / "session-checkpoint.json"
+    return root / _CHECKPOINT_FILE
 
 
 def _stale_hours(artha_dir: Path) -> float:
@@ -112,7 +121,7 @@ def read_checkpoint(artha_dir: Path) -> dict[str, Any] | None:
     if not _is_enabled(artha_dir):
         return None
 
-    path = artha_dir / _CHECKPOINT_FILE
+    path = _checkpoint_path(artha_dir)
     if not path.exists():
         return None
 
@@ -170,7 +179,7 @@ def write_checkpoint(
     if not _is_enabled(artha_dir):
         return
 
-    path = artha_dir / _CHECKPOINT_FILE
+    path = _checkpoint_path(artha_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     data: dict[str, Any] = {
@@ -194,7 +203,7 @@ def clear_checkpoint(artha_dir: Path) -> None:
     Args:
         artha_dir: Artha project root.
     """
-    path = artha_dir / _CHECKPOINT_FILE
+    path = _checkpoint_path(artha_dir)
     path.unlink(missing_ok=True)
 
 

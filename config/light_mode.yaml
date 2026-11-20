@@ -1,0 +1,49 @@
+# Explicit Phase 1 Light-mode Markdown write allowlist.
+# YAML/JSON/jsonl and Work OS State Files intentionally stay out of scope.
+# Excluded until their scripted writers use lib.state_writer: pr_manager, ai_trend_radar,
+# home_intelligence, home_iot, career_search (plaintext writer). They stay under the handoff only.
+schema_version: 1
+state_files:
+  - state/goals.md
+  - state/open_items.md
+  - state/calendar.md
+  - state/health-check.md
+  - state/decisions.md
+  - state/scenarios.md
+  - state/planning_signals.md
+  - state/self_model.md
+  - state/social.md
+  - state/readiness.md
+  - state/logistics.md
+  - state/finance_forecast.md
+  - state/home_events.md
+  - state/memory.md
+  - state/content_stage.md
+  - state/health-metrics.md
+  - state/finance.md.age
+  - state/immigration.md.age
+  - state/health.md.age
+  - state/estate.md.age
+  - state/insurance.md.age
+  - state/vehicle.md.age
+  - state/contacts.md.age
+  - state/transactions.md.age
+  - state/audit.md.age
+  - state/kids.md.age
+  - state/employment.md.age
+  - state/business.md.age
+  - state/caregiving.md.age
+  - state/occasions.md.age
+  - state/comms.md
+  - state/inbox.md
+  - state/dashboard.md
+  - state/learning.md
+  - state/travel.md
+  - state/relationships.md
+  - state/wellness.md
+  - state/boundary.md
+  - state/digital.md
+  - state/shopping.md
+  - state/pets.md
+  - state/energy.md
+  - state/research.md

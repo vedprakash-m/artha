@@ -663,9 +663,11 @@ class TestDryRunFlag:
 # ---------------------------------------------------------------------------
 
 class TestStandaloneMode:
-    def test_standalone_skips_when_sentinel_recent(self, tmp_artha: Path) -> None:
-        """Standalone mode must skip export if .pipeline_running is <1h old."""
-        sentinel = tmp_artha / "tmp" / ".pipeline_running"
+    def test_standalone_skips_when_sentinel_recent(self, tmp_artha: Path, monkeypatch) -> None:
+        """Standalone mode must skip export if the machine-local pipeline sentinel is <1h old."""
+        monkeypatch.setenv("ARTHA_LOCAL_DIR", str(tmp_artha / "local"))
+        (tmp_artha / "local").mkdir()
+        sentinel = tmp_artha / "local" / "pipeline-running.lock"
         sentinel.touch()
         # Sentinel is brand new (age ≈ 0 seconds < 3600)
 
@@ -677,9 +679,11 @@ class TestStandaloneMode:
         assert result is False, "Should skip when sentinel is recent"
         mock_post.assert_not_called()
 
-    def test_standalone_proceeds_when_sentinel_old(self, tmp_artha: Path) -> None:
-        """Standalone mode must proceed if .pipeline_running is >1h old."""
-        sentinel = tmp_artha / "tmp" / ".pipeline_running"
+    def test_standalone_proceeds_when_sentinel_old(self, tmp_artha: Path, monkeypatch) -> None:
+        """Standalone mode must proceed if the machine-local pipeline sentinel is >1h old."""
+        monkeypatch.setenv("ARTHA_LOCAL_DIR", str(tmp_artha / "local"))
+        (tmp_artha / "local").mkdir()
+        sentinel = tmp_artha / "local" / "pipeline-running.lock"
         sentinel.touch()
 
         # Age the sentinel to 2 hours ago

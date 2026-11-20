@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -236,6 +237,77 @@ def test_revision_token_is_bound_to_target(tmp_path):
     _, goals_revision = v.revision_for("goals")
     assert kids_revision != goals_revision
 
+
+def test_conflict_scan_unknown_maps_before_and_after_publication(monkeypatch, tmp_path):
+    from lib.sync_conflicts import ConflictScanUnknown
+
+    vault = vt.AgeVault(
+        tmp_path,
+        identity=lambda: "unused",
+        recipient="age1unused",
+    )
+    path = tmp_path / "kids.md.age"
+    monkeypatch.setattr(
+        vt,
+        "find_conflicts",
+        lambda _path: (_ for _ in ()).throw(ConflictScanUnknown("synthetic unknown")),
+    )
+    with pytest.raises(vt.VaultConflict, match="unknown"):
+        vault._check_conflicts(path, "kids")
+    with pytest.raises(vt.VaultUncertain, match="unknown"):
+        vault._check_conflicts(path, "kids", published=True)
+
+
+def test_visible_conflict_maps_before_and_after_publication(monkeypatch, tmp_path):
+    vault = vt.AgeVault(
+        tmp_path,
+        identity=lambda: "unused",
+        recipient="age1unused",
+    )
+    path = tmp_path / "kids.md.age"
+    conflict = tmp_path / "kids-HOST.md.age"
+    monkeypatch.setattr(vt, "find_conflicts", lambda _path: [conflict])
+    with pytest.raises(vt.VaultConflict, match="copy present"):
+        vault._check_conflicts(path, "kids")
+    with pytest.raises(vt.VaultUncertain, match="publication completed"):
+        vault._check_conflicts(path, "kids", published=True)
+
+
+def test_invalid_revision_and_rotation_failure_are_refused(monkeypatch, tmp_path):
+    vault = vt.AgeVault(
+        tmp_path,
+        identity=lambda: "unused",
+        recipient="age1unused",
+        age_bin="/bin/true",
+    )
+    (tmp_path / "kids.md.age").write_bytes(b"original")
+    monkeypatch.setattr(vault, "_encrypt", lambda _text: b"new")
+    with pytest.raises(vt.VaultConflict, match="invalid"):
+        vault._write("kids", DOC, "kids", (), DOC, "not-a-revision")
+
+    monkeypatch.setattr(vault, "_rotate_versions", lambda _path: (_ for _ in ()).throw(
+        OSError("synthetic rotate failure")
+    ))
+    with pytest.raises(OSError, match="rotate failure"):
+        vault._write("kids", DOC, "kids", (), DOC, None)
+
+
+def test_refusal_marker_failure_does_not_replace_vault_failure(tmp_path, monkeypatch):
+    vault = vt.AgeVault(
+        tmp_path / "state",
+        identity=lambda: "unused",
+        recipient="age1unused",
+    )
+    repository = Path(vt.__file__).resolve().parents[2]
+    target = repository / "state" / "synthetic.md.age"
+    monkeypatch.setattr(
+        vt,
+        "record_refusal",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("synthetic marker")),
+    )
+    vault._record_state_refusal(target, "refused")
+    vault._record_state_refusal(tmp_path / "outside.md.age", "refused")
+
 @pytest.mark.parametrize("name", ["", r"..\escape", r"folder\finance", r"C:\finance", "finance:stream"])
 def test_vault_rejects_nonportable_state_names_before_io(tmp_path, name):
     vault = vt.AgeVault(tmp_path, identity=lambda: "unused", recipient="age1unused")
@@ -317,3 +389,51 @@ def test_no_plaintext_or_key_left_in_tmpdir_after_read(tmp_path, keypair):
     assert list(tmpdir.iterdir()) == []
     blob = b"".join(p.read_bytes() for p in state.rglob("*") if p.is_file())
     assert secret.encode() not in blob and b"OI-001" not in blob
+
+
+def test_ciphertext_changed_between_staging_and_replacement_is_refused(vault, tmp_path, monkeypatch):
+    vault.write("goals", "---\ndomain: goals\n---\nold\n")
+    target = vault.path_for("goals")
+    before = target.read_bytes()
+    real = vt.AgeVault._cipher_revision
+    calls = {"n": 0}
+
+    def drifting(path):
+        calls["n"] += 1
+        # the second look (after staging) sees a different revision: another writer replaced the file
+        return "0" * 64 if calls["n"] == 2 else real(path)
+
+    monkeypatch.setattr(vt.AgeVault, "_cipher_revision", staticmethod(drifting))
+    with pytest.raises(vt.VaultConflict, match="changed before replacement"):
+        vault.write("goals", "---\ndomain: goals\n---\nnew\n")
+    assert target.read_bytes() == before
+
+
+def test_publication_readback_mismatch_and_post_replace_failure_are_uncertain(vault, monkeypatch):
+    vault.write("goals", "---\ndomain: goals\n---\nold\n")
+    real_read = Path.read_bytes
+
+    def corrupt_readback(self):
+        data = real_read(self)
+        return data + b"x" if self.name == "goals.md.age" else data
+
+    monkeypatch.setattr(Path, "read_bytes", corrupt_readback)
+    with pytest.raises(vt.VaultUncertain, match="verification failed"):
+        vault.write("goals", "---\ndomain: goals\n---\nnew\n")
+    monkeypatch.undo()
+
+    syncs = {"n": 0}
+
+    def fail_dir_sync(path):
+        syncs["n"] += 1
+        if syncs["n"] >= 2:  # the first call belongs to version rotation; the second follows publication
+            raise OSError("synthetic directory sync failure")
+
+    monkeypatch.setattr(vt.AgeVault, "_fsync_directory", staticmethod(fail_dir_sync))
+    with pytest.raises(vt.VaultUncertain, match="outcome is uncertain"):
+        vault.write("goals", "---\ndomain: goals\n---\nnewer\n")
+
+
+def test_directory_sync_is_skipped_on_windows(tmp_path, monkeypatch):
+    monkeypatch.setattr(os, "name", "nt")
+    vt.AgeVault._fsync_directory(tmp_path / "does-not-exist")

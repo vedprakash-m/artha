@@ -171,3 +171,97 @@ def test_actual_host_file_tool_shapes_deny_sensitive_state_paths(payload):
 ])
 def test_actual_host_file_tool_shapes_allow_non_sensitive_paths(payload):
     assert tg.decide(payload, domains=D) is None
+
+
+def test_mutating_file_tool_is_refused_when_in_scope_target_has_conflict(
+    tmp_path, monkeypatch
+):
+    state = tmp_path / "state"
+    config = tmp_path / "config"
+    state.mkdir()
+    config.mkdir()
+    (config / "state_registry.yaml").write_text(
+        'state_files:\n  - path: "state/goals.md"\n',
+        encoding="utf-8",
+    )
+    (state / "goals.md").write_text("---\ndomain: goals\n---\n", encoding="utf-8")
+    (state / "goals-SYNTH-HOST-AB12.md").write_text("other", encoding="utf-8")
+    monkeypatch.setattr(tg, "_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "lib.sync_conflicts.runtime_hostnames",
+        lambda: ("SYNTH-HOST-AB12",),
+    )
+
+    reason = tg.decide(
+        {
+            "tool_name": "edit",
+            "tool_input": {"file_path": "state/goals.md", "content": "replacement"},
+        },
+        domains=D,
+    )
+    assert reason and "sync conflict" in reason
+
+
+def test_mutating_light_target_refuses_scan_unknown_and_unverified_handoff(
+    tmp_path, monkeypatch
+):
+    state = tmp_path / "state"
+    config = tmp_path / "config"
+    state.mkdir()
+    config.mkdir()
+    target = state / "goals.md"
+    target.write_text("---\ndomain: goals\n---\n", encoding="utf-8")
+    (config / "state_registry.yaml").write_text(
+        'state_files:\n  - path: "state/goals.md"\n'
+    )
+    monkeypatch.setattr(tg, "_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr("lib.state_targets.is_light_markdown_target", lambda *_args: True)
+
+    from lib.sync_conflicts import ConflictScanUnknown
+    monkeypatch.setattr(
+        "lib.sync_conflicts.find_conflicts",
+        lambda _path: (_ for _ in ()).throw(ConflictScanUnknown("synthetic unknown")),
+    )
+    assert "unknown" in tg.decide(
+        {"tool_name": "edit", "tool_input": {"file_path": "state/goals.md"}},
+        domains=D,
+    )
+
+    monkeypatch.setattr("lib.sync_conflicts.find_conflicts", lambda _path: [])
+    monkeypatch.setattr(tg, "_light_mode_enabled", lambda _root: True)
+    monkeypatch.setattr("handoff.verify", lambda _root, **_kw: type(
+        "Result", (), {"status": "unverified", "message": "synthetic no handoff"}
+    )())
+    assert "unverified" in tg.decide(
+        {"tool_name": "edit", "tool_input": {"file_path": "state/goals.md"}},
+        domains=D,
+    )
+
+
+def test_light_mode_enablement_uses_config_and_environment(monkeypatch, tmp_path):
+    config = tmp_path / "config"
+    config.mkdir()
+    path = config / "catchup_core.yaml"
+    monkeypatch.delenv("ARTHA_CUTOVER", raising=False)
+    assert tg._light_mode_enabled(tmp_path)
+    path.write_text("cutover: true\n")
+    assert not tg._light_mode_enabled(tmp_path)
+    monkeypatch.setenv("ARTHA_CUTOVER", "0")
+    assert tg._light_mode_enabled(tmp_path)
+
+
+@pytest.mark.parametrize("command", [
+    "python3 scripts/handoff.py seal --owner-confirmed",
+    "python3 scripts/write_refusals.py clear",
+    "python3 scripts/state_restore.py apply state/goals.md snap",
+    "cd scripts && python3 handoff.py seal --owner-confirmed",
+])
+def test_owner_only_light_commands_are_denied_to_agents(command):
+    reason = tg.decide(bash(command), domains=D)
+    assert reason and "owner" in reason
+
+
+def test_read_only_light_commands_stay_allowed():
+    for command in ("python3 scripts/handoff.py verify", "python3 scripts/write_refusals.py list",
+                    "python3 scripts/state_restore.py list state/goals.md"):
+        assert tg.decide(bash(command), domains=D) is None

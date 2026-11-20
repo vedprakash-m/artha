@@ -109,7 +109,7 @@ _log = get_logger("pipeline")
 _CONNECTORS_YAML = _REPO_ROOT / "config" / "connectors.yaml"
 _HEALTH_CHECK_MD = _REPO_ROOT / "state" / "health-check.md"
 _CONNECTOR_PKG = "connectors"
-_CHECKPOINT_JSON = _REPO_ROOT / "state" / "checkpoint.json"
+_CHECKPOINT_JSON = default_installation_dir() / "pipeline-checkpoint.json"
 _CONNECTOR_STATE_DIR = _REPO_ROOT / "state" / "connectors"
 
 # Connector staleness TTL thresholds (spec §2.1.3 FETCH state)
@@ -920,7 +920,7 @@ def run_pipeline(
     all_classified_lines: list[str] = []  # collected for --output snapshot
 
     # §15.3: sentinel so standalone hermes export defers if pipeline is mid-run
-    _sentinel_path = _REPO_ROOT / "tmp" / ".pipeline_running"
+    _sentinel_path = default_installation_dir() / "pipeline-running.lock"
     try:
         _sentinel_path.parent.mkdir(parents=True, exist_ok=True)
         _sentinel_path.touch()
@@ -1562,17 +1562,32 @@ def _write_bridge_health_section(artha_dir: Path) -> None:
     ]
 
     try:
+        from lib.state_writer import StateWriteConflict, read_versioned, write as state_write
+
         # Replace any existing Bridge Health section, or append if absent
-        existing = health_md.read_text(encoding="utf-8")
+        existing, expected_token = read_versioned(health_md)
+        if not existing.startswith("---"):
+            existing = (
+                "---\nschema_version: '1.0'\ndomain: health-check\n"
+                "last_updated: 'unknown'\n---\n" + existing
+            )
         # Strip old Bridge Health section (from its heading to next ## or EOF)
         cleaned = _re.sub(
             r"\n## Bridge Health[^\n]*\n.*?(?=\n## |\Z)", "", existing, flags=_re.DOTALL
         )
-        with health_md.open("w", encoding="utf-8") as fh:
-            fh.write(cleaned.rstrip("\n"))
-            fh.writelines(section_lines)
-    except OSError:
-        pass  # Non-fatal
+        result = state_write(
+            health_md,
+            cleaned.rstrip("\n") + "".join(section_lines),
+            domain="health-check",
+            source="pipeline.bridge_health",
+            expected_token=expected_token,
+            pii_check=False,
+            snapshot=health_md.resolve().is_relative_to(_REPO_ROOT),
+        )
+        if not result.success:
+            print("[pipeline] WARNING: health-check bridge section was not written", file=sys.stderr)
+    except (OSError, StateWriteConflict) as exc:
+        print(f"[pipeline] WARNING: health-check bridge update refused: {exc}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -1624,7 +1639,7 @@ def _write_checkpoint(
     state_outputs: dict,
     interrupted_at: str | None = None,
 ) -> None:
-    """Atomically write state/checkpoint.json per spec §2.1.3 schema."""
+    """Atomically write the machine-local pipeline checkpoint per spec §2.1.3 schema."""
     require_active_installation(_CHECKPOINT_JSON)
     checkpoint: dict = {
         "schema_version": 1,
@@ -2166,10 +2181,22 @@ def _write_health_report(results: list[tuple[str, bool]]) -> None:
         mark = "✅" if ok else "❌"
         lines.append(f"- {mark} `{name}`\n")
     try:
-        with open(_HEALTH_CHECK_MD, "a", encoding="utf-8") as fh:
-            fh.writelines(lines)
-    except OSError:
-        pass  # Non-fatal
+        from lib.state_writer import StateWriteConflict, read_versioned, write as state_write
+
+        content, expected_token = read_versioned(_HEALTH_CHECK_MD)
+        result = state_write(
+            _HEALTH_CHECK_MD,
+            content + "".join(lines),
+            domain="health-check",
+            source="pipeline.health_report",
+            expected_token=expected_token,
+            pii_check=False,
+            snapshot=_HEALTH_CHECK_MD.resolve().is_relative_to(_REPO_ROOT),
+        )
+        if not result.success:
+            print("[pipeline] WARNING: connector health report was not written", file=sys.stderr)
+    except (OSError, StateWriteConflict) as exc:
+        print(f"[pipeline] WARNING: connector health report refused: {exc}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -2272,7 +2299,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--resume",
         action="store_true",
-        help="Resume pipeline from last checkpoint (if state/checkpoint.json exists)",
+        help="Resume pipeline from last checkpoint (if the machine-local pipeline checkpoint exists)",
     )
     p.add_argument(
         "--mode",
@@ -2402,7 +2429,7 @@ def _cmd_archive_brief(raw_path: str) -> int:
 # ---------------------------------------------------------------------------
 
 _VAULT_DOMAINS = frozenset({"immigration", "finance", "health", "home"})
-_DIGEST_LOCK = _REPO_ROOT / "tmp" / "scheduled_brief.lock"
+_DIGEST_LOCK = default_installation_dir() / "scheduled-brief.lock"
 _DIGEST_STALE_SECS = 7200  # 2 hours
 
 

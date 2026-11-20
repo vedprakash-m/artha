@@ -284,7 +284,13 @@ def _write_state_file(
     else:
         calendar_flags = "No restructuring needed — readiness within normal range."
 
-    content = f"""# Readiness Summary
+    content = f"""---
+schema_version: "1.0"
+domain: readiness
+last_updated: "{today}"
+---
+
+# Readiness Summary
 date: {today}
 readiness_score: {score_str}
 focus_mode: {focus_mode}
@@ -302,7 +308,23 @@ focus_mode: {focus_mode}
 - source: {source_str}
 - generated_at: {_now_utc()}
 """
-    _STATE_FILE.write_text(content, encoding="utf-8")
+    from lib.state_writer import create_if_absent_token, read_versioned, write
+
+    expected = (
+        read_versioned(_STATE_FILE)[1]
+        if _STATE_FILE.exists()
+        else create_if_absent_token(_STATE_FILE)
+    )
+    result = write(
+        _STATE_FILE,
+        content,
+        domain="readiness",
+        source="readiness_agent",
+        expected_token=expected,
+        snapshot=False,  # derived; recover from biometrics and state_guard
+    )
+    if not result.success:
+        raise RuntimeError("readiness.md write was refused")
 
 
 # ---------------------------------------------------------------------------

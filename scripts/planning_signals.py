@@ -13,7 +13,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -150,18 +149,10 @@ def _assemble(frontmatter: dict[str, Any], body: str) -> str:
 
 
 def _atomic_write(path: Path, content: str) -> None:
+    from lib.state_writer import write_current
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        os.replace(tmp_name, path)
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    write_current(path, content, domain="planning_signals", source="planning_signals")
 
 
 def _safe_load_file(path: Path) -> tuple[dict[str, Any], str]:
@@ -513,8 +504,25 @@ def ready_offers(path: Path = SIGNALS_FILE, limit: int = 1) -> list[dict[str, An
     return deepcopy(filtered[:limit])
 
 
-def _load_target(path: Path, domain: str, default_key: str) -> tuple[dict[str, Any], str]:
-    fm, body = _safe_load_file(path)
+def _load_target(
+    path: Path, domain: str, default_key: str
+) -> tuple[dict[str, Any], str, object]:
+    from lib.state_writer import create_if_absent_token, read_versioned
+    from lib.state_frontmatter import split_frontmatter
+
+    if path.exists():
+        content, token = read_versioned(path)
+        parts = split_frontmatter(content)
+        if parts is None:
+            fm, body = {}, content
+        else:
+            fm = yaml.safe_load(parts.metadata) or {}
+            body = parts.body
+            if not isinstance(fm, dict):
+                raise PlanningSignalError(f"{path.name} frontmatter must be a mapping")
+    else:
+        fm, body = {}, ""
+        token = create_if_absent_token(path)
     fm.setdefault("schema_version", "1.0")
     fm.setdefault("domain", domain)
     fm.setdefault("last_updated", _today())
@@ -523,19 +531,30 @@ def _load_target(path: Path, domain: str, default_key: str) -> tuple[dict[str, A
     fm.setdefault(default_key, [])
     if not isinstance(fm[default_key], list):
         raise PlanningSignalError(f"{path.name}.{default_key} must be a list")
-    return fm, body
+    return fm, body, token
 
 
-def _write_validated_target(path: Path, fm: dict[str, Any], body: str) -> None:
-    backup = _snapshot(path)
+def _write_validated_target(
+    path: Path, fm: dict[str, Any], body: str, expected_token: object
+) -> None:
+    from lib.state_writer import write
+
     content = _assemble(fm, body)
     try:
         yaml.safe_load(content.split("---", 2)[1])
-        _atomic_write(path, content)
+        result = write(
+            path,
+            content,
+            domain=fm["domain"],
+            source="planning_signals",
+            expected_token=expected_token,
+            pii_check=False,
+            snapshot=Path(path).resolve().is_relative_to(ARTHA_DIR),
+        )
+        if not result.success:
+            raise PlanningSignalError(f"State File write refused for {path.name}")
         _safe_load_file(path)
     except Exception as exc:
-        if backup and backup.exists():
-            shutil.copy2(backup, path)
         raise PlanningSignalError(f"post-write validation failed for {path.name}: {exc}") from exc
 
 
@@ -555,8 +574,14 @@ def _open_item_has_source_ref(content: str, source_ref: str) -> bool:
 
 
 def _append_open_item(open_items_file: Path, item: dict[str, Any]) -> str:
-    content = open_items_file.read_text(encoding="utf-8") if open_items_file.exists() else (
+    from lib.state_writer import create_if_absent_token, read_versioned, write
+
+    content, expected_token = (
+        read_versioned(open_items_file)
+        if open_items_file.exists()
+        else ((
         "---\ndomain: open_items\nlast_updated: ''\nschema_version: '1.0'\n---\n\n# Open Items\n\n## Active\n"
+        ), create_if_absent_token(open_items_file))
     )
     if _open_item_has_source_ref(content, str(item["source_ref"])):
         return "duplicate"
@@ -583,17 +608,23 @@ def _append_open_item(open_items_file: Path, item: dict[str, Any]) -> str:
     if item.get("review_reason"):
         lines.append(f"  review_reason: \"{item['review_reason']}\"")
     lines.append("")
-    backup = _snapshot(open_items_file)
     try:
         new_content = content.rstrip() + "\n" + "\n".join(lines)
-        _atomic_write(open_items_file, new_content)
+        result = write(
+            open_items_file,
+            new_content,
+            domain="open_items",
+            source="planning_signals",
+            expected_token=expected_token,
+            snapshot=open_items_file.resolve().is_relative_to(ARTHA_DIR),
+        )
+        if not result.success:
+            raise PlanningSignalError("open_items write was refused")
         if "source_ref:" not in open_items_file.read_text(encoding="utf-8"):
             raise PlanningSignalError("open_items post-write validation failed")
         return item_id
-    except Exception:
-        if backup and backup.exists():
-            shutil.copy2(backup, open_items_file)
-        raise
+    except Exception as exc:
+        raise PlanningSignalError(f"open_items write failed: {type(exc).__name__}") from exc
 
 
 def _parse_open_item_blocks(content: str) -> list[dict[str, Any]]:
@@ -715,7 +746,9 @@ def evaluate_scenarios(
     and no newer signal evidence exists; otherwise produce at most one OI per
     scenario with ``source_ref: SCN-NNN``.
     """
-    scenarios_fm, scenarios_body = _load_target(scenarios_file, "scenarios", "scenarios")
+    scenarios_fm, scenarios_body, scenarios_token = _load_target(
+        scenarios_file, "scenarios", "scenarios"
+    )
     signals = {s.get("id"): s for s in load(signals_file).signals}
     open_content = open_items_file.read_text(encoding="utf-8") if open_items_file.exists() else ""
     results: list[dict[str, Any]] = []
@@ -752,7 +785,9 @@ def evaluate_scenarios(
         changed = True
     if write and changed:
         scenarios_fm["last_updated"] = _today()
-        _write_validated_target(scenarios_file, scenarios_fm, scenarios_body)
+        _write_validated_target(
+            scenarios_file, scenarios_fm, scenarios_body, scenarios_token
+        )
     return results
 
 
@@ -768,7 +803,7 @@ def _scenario_paths(signal: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _materialize_scenario(signal: dict[str, Any], scenarios_file: Path) -> str:
-    fm, body = _load_target(scenarios_file, "scenarios", "scenarios")
+    fm, body, expected_token = _load_target(scenarios_file, "scenarios", "scenarios")
     for scenario in fm["scenarios"]:
         if scenario.get("signal_ref") == signal["id"]:
             return str(scenario["id"])
@@ -795,12 +830,14 @@ def _materialize_scenario(signal: dict[str, Any], scenarios_file: Path) -> str:
         "last_evaluated": _today(),
     })
     fm["last_updated"] = _today()
-    _write_validated_target(scenarios_file, fm, body)
+    _write_validated_target(scenarios_file, fm, body, expected_token)
     return scenario_id
 
 
 def _materialize_decision(signal: dict[str, Any], decisions_file: Path) -> str:
-    fm, body = _load_target(decisions_file, "decisions", "decision_links")
+    fm, body, expected_token = _load_target(
+        decisions_file, "decisions", "decision_links"
+    )
     for link in fm["decision_links"]:
         if link.get("signal_ref") == signal["id"]:
             return str(link["id"])
@@ -822,7 +859,7 @@ def _materialize_decision(signal: dict[str, Any], decisions_file: Path) -> str:
         "existing_decision_title": existing_title,
     })
     fm["last_updated"] = _today()
-    _write_validated_target(decisions_file, fm, body)
+    _write_validated_target(decisions_file, fm, body, expected_token)
     return decision_id
 
 

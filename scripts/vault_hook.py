@@ -50,7 +50,8 @@ except Exception:  # noqa: BLE001
     SENSITIVE_DOMAINS = [
         "immigration", "finance", "insurance", "estate", "health",
         "audit", "vehicle", "contacts", "occasions", "transactions",
-        "kids", "employment",  # DEBT-006 — salary, RSU, comp data
+        "kids", "employment", "career_search", "business",
+        "caregiving", "work-career",
     ]
 
 

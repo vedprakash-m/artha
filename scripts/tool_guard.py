@@ -20,6 +20,7 @@ import os
 import re
 import shlex
 import sys
+from pathlib import Path
 from typing import Any
 
 _FALLBACK_DOMAINS = (
@@ -36,6 +37,12 @@ _FILE_TOOLS = frozenset({
     "read", "view", "edit", "write", "create", "notebookedit", "grep", "rg", "glob",
     "read_file", "write_file", "edit_file", "create_file",
     "replace_string_in_file", "read_workspace_file",
+    "apply_patch", "multi_edit",
+})
+_MUTATING_FILE_TOOLS = frozenset({
+    "edit", "write", "create", "notebookedit",
+    "write_file", "edit_file", "create_file", "replace_string_in_file",
+    "apply_patch", "multi_edit",
 })
 _PATH_FIELDS = (
     "file_path", "filePath", "path", "paths", "notebook_path",
@@ -59,9 +66,55 @@ def _plaintext_state(text: str, domains: tuple[str, ...]) -> str | None:
     return match.group(1) if match else None
 
 
+def _workspace_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _path_from_workspace(value: str, root: Path) -> Path:
+    candidate = Path(value).expanduser()
+    return candidate if candidate.is_absolute() else root / candidate
+
+
+def _conflict_write_reason(targets: list[str]) -> str | None:
+    from lib.state_targets import is_light_markdown_target
+    from lib.sync_conflicts import ConflictScanUnknown, find_conflicts
+
+    root = _workspace_root()
+    inspected_light_target = False
+    for value in targets:
+        path = _path_from_workspace(value, root)
+        if not is_light_markdown_target(path, root):
+            continue
+        inspected_light_target = True
+        try:
+            conflicts = find_conflicts(path)
+        except ConflictScanUnknown as exc:
+            return f"conflict status for {path.name} is unknown; write refused: {exc}"
+        if conflicts:
+            return (
+                f"sync conflict blocks write to {path.name}: "
+                + ", ".join(conflict.name for conflict in conflicts)
+            )
+    if inspected_light_target and _light_mode_enabled(root):
+        from handoff import verify
+        result = verify(root, record=False)
+        if result.status != "verified":
+            return f"Light-mode handoff is unverified; native State File write refused: {result.message}"
+    return None
+
+
+def _light_mode_enabled(root: Path) -> bool:
+    from lib.light_mode import configured_cutover, effective_cutover
+    return not effective_cutover(
+        configured=configured_cutover(root),
+        environment=os.environ.get("ARTHA_CUTOVER"),
+    )
+
+
 _HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n.*?\n\s*\1\b", re.DOTALL)
 _SPLIT = re.compile(r"\n|;|&&|\|\|?")
 _TEXT_ONLY = {"echo", "printf"}
+_OWNER_ONLY = re.compile(r"(?:handoff|write_refusals|state_restore)\.py\s+(?:seal|clear|apply)\b")
 
 
 def _segments(command: str) -> list[tuple[str, str]]:
@@ -91,6 +144,8 @@ def _bash_reason(command: str, allow_decrypt: bool, domains: tuple[str, ...]) ->
             return "launching a model CLI with a permission-bypassing flag is not allowed (re-artha §6.6)"
         if program.startswith("python") and _DECRYPT.search(segment) and not allow_decrypt:
             return "`vault.py decrypt` writes plaintext to disk; use `vault.py read <domain>` (re-artha §10.6)"
+        if program.startswith("python") and _OWNER_ONLY.search(segment):
+            return "this Light-mode command is owner-only; the owner runs it in their own terminal"
         found = _plaintext_state(segment, domains)
         if found:
             return f"state/{found}.md is vault-protected; read it with `vault.py read {found}`"
@@ -145,6 +200,8 @@ def decide(payload: dict[str, Any], *, allow_decrypt: bool = False,
         )
         if found:
             return f"state/{found}.md is vault-protected; read it with `vault.py read {found}`"
+        if normalized in _MUTATING_FILE_TOOLS:
+            return _conflict_write_reason(targets)
     return None
 
 
@@ -154,7 +211,7 @@ def main(stdin: Any = None) -> int:
         payload = json.loads((stdin or sys.stdin).read() or "{}")
         if not isinstance(payload, dict):
             raise GuardInputError("hook payload must be an object")
-        reason = decide(payload, allow_decrypt=os.environ.get("ARTHA_ALLOW_VAULT_DECRYPT") == "1")
+        reason = decide(payload, allow_decrypt=False)
     except (GuardInputError, json.JSONDecodeError):
         reason = "the required tool guard input could not be validated; the tool call was denied"
     except Exception as exc:  # noqa: BLE001 — mandatory guard failure still denies

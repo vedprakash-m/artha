@@ -44,14 +44,14 @@ def test_the_guardrail_treats_a_sealed_domain_as_readable_without_a_plaintext_fi
     assert missing["readable"] is False and missing["reason"] == "file_missing"
 
 
-def test_vault_decrypt_refuses_without_the_offline_edit_flag(monkeypatch, capsys):
+def test_vault_decrypt_retires_the_offline_edit_flag(monkeypatch, capsys):
     import pytest  # noqa: PLC0415
     called = []
     monkeypatch.setattr(vault, "do_decrypt", lambda: called.append(1))
     monkeypatch.setattr(sys, "argv", ["vault.py", "decrypt"])
-    with pytest.raises(SystemExit) as refused:
-        vault.main()
-    assert refused.value.code == 2 and not called and "--offline-edit" in capsys.readouterr().err
-    monkeypatch.setattr(sys, "argv", ["vault.py", "decrypt", "--offline-edit"])
     vault.main()
     assert called == [1]
+    monkeypatch.setattr(sys, "argv", ["vault.py", "decrypt", "--offline-edit"])
+    with pytest.raises(SystemExit) as refused:
+        vault.main()
+    assert refused.value.code == 2 and "no longer accepts" in capsys.readouterr().err

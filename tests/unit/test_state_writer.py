@@ -18,6 +18,7 @@ Coverage:
 from __future__ import annotations
 
 import base64
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -311,6 +312,54 @@ class TestWriteErrorHandling:
 
 
 class TestConflictAwarePublication:
+    def test_post_publication_conflict_returns_uncertain(
+        self, tmp_path, monkeypatch
+    ):
+        target = tmp_path / "state.md"
+        target.write_text("original", encoding="utf-8")
+        real_replace = os.replace
+
+        def replace_then_create_conflict(source, destination):
+            real_replace(source, destination)
+            (tmp_path / "state-HOST-2.md").write_text("other", encoding="utf-8")
+
+        monkeypatch.setattr(os, "replace", replace_then_create_conflict)
+        monkeypatch.setattr(
+            "lib.sync_conflicts.runtime_hostnames",
+            lambda: ("HOST-2",),
+        )
+        with _passthrough_middleware():
+            result = write(target, "proposed", domain="test", source="test", snapshot=False)
+        assert result.success is False
+        assert result.uncertain is True
+        assert result.conflicts_after_write
+
+    def test_conflict_copy_refuses_write_before_snapshot_or_replace(
+        self, tmp_path, monkeypatch
+    ):
+        target = tmp_path / "state.md"
+        target.write_text("original", encoding="utf-8")
+        conflict = tmp_path / "state-SYNTH-HOST-AB12.md"
+        conflict.write_text("other writer", encoding="utf-8")
+        _, token = read_versioned(target)
+        monkeypatch.setattr(
+            "lib.sync_conflicts.runtime_hostnames",
+            lambda: ("SYNTH-HOST-AB12",),
+        )
+
+        with _passthrough_middleware(), pytest.raises(StateWriteConflict, match="conflict"):
+            write(
+                target,
+                "proposed",
+                expected_token=token,
+                domain="test",
+                source="test",
+                snapshot=True,
+            )
+
+        assert target.read_text(encoding="utf-8") == "original"
+        assert conflict.read_text(encoding="utf-8") == "other writer"
+
     def test_omitted_token_refuses_existing_target_without_minting(self, tmp_path):
         target = tmp_path / "state.md"
         target.write_text("original", encoding="utf-8")

@@ -147,14 +147,24 @@ def _ensure_open_items_header() -> None:
     if OPEN_ITEMS_FILE.exists():
         return
     template = STATE_DIR / "templates" / "open_items.md"
-    if template.exists():
-        import shutil
-        shutil.copy2(template, OPEN_ITEMS_FILE)
-    else:
-        OPEN_ITEMS_FILE.write_text(
-            "---\ndomain: open_items\nlast_updated: \"\"\nschema_version: \"1.0\"\n---\n\n# Open Items\n\n## Active\n",
-            encoding="utf-8",
-        )
+    from lib.state_writer import create_if_absent_token, write
+    content = (
+        template.read_text(encoding="utf-8")
+        if template.exists()
+        else "---\ndomain: open_items\nlast_updated: \"\"\nschema_version: \"1.0\"\n---\n\n"
+             "# Open Items\n\n## Active\n"
+    )
+    result = write(
+        OPEN_ITEMS_FILE,
+        content,
+        domain="open_items",
+        source="migrate_oi",
+        expected_token=create_if_absent_token(OPEN_ITEMS_FILE),
+        snapshot=False,
+        pii_check=False,
+    )
+    if not result.success:
+        raise RuntimeError("open_items.md could not be initialized")
 
 
 def run(dry_run: bool = False, verbose: bool = False) -> int:
@@ -207,7 +217,8 @@ def run(dry_run: bool = False, verbose: bool = False) -> int:
         return 0
 
     _ensure_open_items_header()
-    current = OPEN_ITEMS_FILE.read_text(encoding="utf-8")
+    from lib.state_writer import read_versioned, write
+    current, expected_token = read_versioned(OPEN_ITEMS_FILE)
 
     # Find the ## Active section to append inside it, or append at end
     active_marker = "\n## Active\n"
@@ -226,7 +237,18 @@ def run(dry_run: bool = False, verbose: bool = False) -> int:
         count=1,
     )
 
-    OPEN_ITEMS_FILE.write_text(new_content, encoding="utf-8")
+    result = write(
+        OPEN_ITEMS_FILE,
+        new_content,
+        domain="open_items",
+        source="migrate_oi",
+        expected_token=expected_token,
+        pii_check=False,
+        snapshot=OPEN_ITEMS_FILE.resolve().is_relative_to(_REPO_ROOT),
+    )
+    if not result.success:
+        print(f"[migrate_oi] REFUSED: {OPEN_ITEMS_FILE} was not changed.", file=sys.stderr)
+        return 20
     print(
         f"\n[migrate_oi] ✓ Backfilled {len(entries)} OI entries into {OPEN_ITEMS_FILE}.",
         file=sys.stderr,

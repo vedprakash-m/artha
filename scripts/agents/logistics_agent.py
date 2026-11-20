@@ -272,7 +272,13 @@ def _write_state_file(
     trace_id: str,
 ) -> None:
     _STATE_DIR.mkdir(parents=True, exist_ok=True)
-    content = f"""# Logistics Summary
+    content = f"""---
+schema_version: "1.0"
+domain: logistics
+last_updated: "{today}"
+---
+
+# Logistics Summary
 date: {today}
 
 ## Upcoming Expirations
@@ -295,7 +301,23 @@ _source: state/logistics.yaml_
 _generated_at: {_now_utc()}_
 _session_trace_id: {trace_id}_
 """
-    _OUT_FILE.write_text(content, encoding="utf-8")
+    from lib.state_writer import create_if_absent_token, read_versioned, write
+
+    expected = (
+        read_versioned(_OUT_FILE)[1]
+        if _OUT_FILE.exists()
+        else create_if_absent_token(_OUT_FILE)
+    )
+    result = write(
+        _OUT_FILE,
+        content,
+        domain="logistics",
+        source="logistics_agent",
+        expected_token=expected,
+        snapshot=False,  # derived; recover from logistics.yaml and state_guard
+    )
+    if not result.success:
+        raise RuntimeError("logistics.md write was refused")
 
 
 # ---------------------------------------------------------------------------

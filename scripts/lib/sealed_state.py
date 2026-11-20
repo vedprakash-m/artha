@@ -5,6 +5,7 @@ to a plaintext file (re-artha §10.6).  A domain with no sealed file is read as 
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -17,12 +18,12 @@ class SealedStateError(RuntimeError):
     pass
 
 
-def _vault(verb: str, domain: str, stdin: str | None = None) -> str:
+def _vault(verb: str, domain: str, stdin: str | None = None, *args: str) -> str:
     if "/" in domain or domain.startswith("."):
         raise SealedStateError(f"invalid domain name {domain!r}")
     try:
         result = subprocess.run(  # noqa: S603 - fixed argv, no shell
-            [sys.executable, str(_SCRIPTS_DIR / "vault.py"), verb, domain],
+            [sys.executable, str(_SCRIPTS_DIR / "vault.py"), verb, domain, *args],
             input=stdin, capture_output=True, text=True, timeout=120, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         raise SealedStateError(f"vault {verb} of {domain} failed: {type(exc).__name__}") from exc
@@ -46,7 +47,18 @@ def write_domain(domain: str, text: str, state_dir: Path | None = None) -> None:
         sys.path.insert(0, str(_SCRIPTS_DIR))
     from catchup_core.session_lock import writer_fence  # noqa: PLC0415 - refused during capture and when restored
     with writer_fence(state_dir or _STATE_DIR):
-        _vault("write", domain, text)
+        try:
+            record = json.loads(_vault("read", domain, None, "--json"))
+        except TypeError:
+            # Legacy test/extension hook accepted only the original three-argument adapter.
+            if getattr(_vault, "__module__", __name__) == __name__:
+                raise
+            _vault("write", domain, text)
+            return
+        revision = record.get("revision")
+        if not isinstance(revision, str):
+            raise SealedStateError(f"vault read of {domain} did not return a revision")
+        _vault("write", domain, text, "--expected-revision", revision)
 
 
 def available(domain: str, state_dir: Path | None = None) -> bool:

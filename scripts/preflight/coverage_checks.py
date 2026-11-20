@@ -80,18 +80,44 @@ def check_plaintext_in_sync_root(artha_dir: Path | str | None = None) -> CheckRe
     from preflight._types import ARTHA_DIR  # noqa: PLC0415
     root = Path(artha_dir) if artha_dir else Path(ARTHA_DIR)
     found: list[str] = []
+    sensitive_found: list[str] = []
     legacy = root / "tmp" / "pipeline_output.jsonl"
     if legacy.is_file():
         found.append("tmp/pipeline_output.jsonl")
-    for marker in root.glob("*.artha-decrypted"):
-        if marker.name != ".artha-decrypted":
+    state = root / "state"
+    try:
+        from foundation import _normalize_sensitive_files, get_sensitive_domains
+        sensitive = get_sensitive_domains()
+        extensions = dict(_normalize_sensitive_files(
+            __import__("foundation")._config["SENSITIVE_FILES"]
+        ))
+        for domain in sorted(sensitive):
+            plain = state / f"{domain}{extensions.get(domain, '.md')}"
+            sealed = state / f"{domain}{extensions.get(domain, '.md')}.age"
+            if plain.is_file() and sealed.is_file():
+                sensitive_found.append(str(plain.relative_to(root)))
+    except (ImportError, KeyError, TypeError, ValueError, OSError):
+        found.append("sensitive-file inventory unavailable")
+    from lib.sync_conflicts import ConflictScanUnknown, find_conflicts
+    try:
+        if find_conflicts(root / ".artha-decrypted") or any(
+            path.name != ".artha-decrypted"
+            for path in root.glob("*.artha-decrypted")
+            if path.is_file()
+        ):
             found.append("sync-conflict copy of .artha-decrypted")
-            break
+    except ConflictScanUnknown:
+        found.append("vault marker conflict status unknown")
     name = "Plaintext in synced workspace"
-    if not found:
+    if not found and not sensitive_found:
         return CheckResult(name, "P1", True, "none found")
+    severity = "P0" if sensitive_found else "P1"
+    detail = []
+    if sensitive_found:
+        detail.append("sensitive plaintext twin(s): " + ", ".join(sensitive_found))
+    detail.extend(found)
     return CheckResult(
-        name, "P1", False, ", ".join(found),
-        fix_hint="Move or delete it: fetched email content belongs in ~/.artha-local, "
-                 "outside the cloud-synced workspace.",
+        name, severity, False, "; ".join(detail),
+        fix_hint="Inspect and preserve it, then seal sensitive plaintext with "
+                 "`vault.py encrypt`; fetched content belongs in ~/.artha-local.",
     )

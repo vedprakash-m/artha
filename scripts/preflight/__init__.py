@@ -51,13 +51,16 @@ from preflight.runtime_checks import (
     check_eval_alerts,
     check_eval_p1_alerts,
     check_evidence_lake_ttl,
+    check_effective_cutover,
     check_guardrails_rings,
     check_guardrails_yaml,
     check_heartbeat_zero_records,
     check_hermes_context_staleness,
+    check_light_handoff,
     check_mcp_discovery,
     check_onedrive_conflicts,
     check_skill_index,
+    check_sensitive_file_registry,
     check_slo_burn_rate,
     check_state_registry_staleness,
     check_telemetry_integrity,
@@ -108,6 +111,7 @@ def run_preflight(
     quiet: bool = False,
     force_no_guardrails: bool = False,
     read_only: bool | None = None,
+    handoff_check: bool = False,
 ) -> list[CheckResult]:
     """Run all preflight checks. Returns list of CheckResult objects."""
     if read_only is not None:
@@ -152,6 +156,9 @@ def run_preflight(
     # ── P1 — State file population from templates (first-run) ─────────────
     checks.append(check_state_templates(auto_fix=auto_fix))
     checks.append(check_onedrive_conflicts())
+    if handoff_check:
+        checks.append(check_effective_cutover())
+        checks.append(check_light_handoff())
 
     # ── P1 — Warnings only ────────────────────────────────────────────────
     checks.append(check_oauth_token("Gmail", "gmail-oauth-token.json", severity="P1"))
@@ -167,6 +174,7 @@ def run_preflight(
     # advisory by design: it degrades a scope, it never stops a Catch-up (re-artha §6.13).
     checks.append(check_connector_coverage())
     checks.append(check_plaintext_in_sync_root())
+    checks.append(check_sensitive_file_registry())
     checks.append(check_background_footprint())  # §6.12: PULL only — no jobs, no listeners
 
     # ── P1 — Profile completeness (vm-hardening.md Phase 2.2) ─────────────
@@ -479,6 +487,11 @@ def main() -> None:
             "Unavailable in --read-only mode. Expert use only."
         ),
     )
+    parser.add_argument(
+        "--handoff-check",
+        action="store_true",
+        help="Add the owner-attested Light-mode handoff and effective-mode checks.",
+    )
 
     args = parser.parse_args()
     global _READ_ONLY
@@ -502,6 +515,7 @@ def main() -> None:
         quiet=args.quiet,
         force_no_guardrails=args.force_no_guardrails,
         read_only=args.read_only,
+        handoff_check=args.handoff_check,
     )
     all_ok   = advisory or all(c.passed for c in checks if c.severity == "P0")
 

@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import json
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -61,11 +60,10 @@ _STATE_DIR = _REPO_ROOT / "state"
 from lib.local_paths import audit_log_path
 _AUDIT_LOG = audit_log_path(_STATE_DIR.parent)
 
-# Domains stored as encrypted .age files (contain sensitive PII)
-_ENCRYPTED_DOMAINS: frozenset[str] = frozenset({
-    "audit", "contacts", "estate", "finance", "health",
-    "immigration", "insurance", "occasions", "vehicle",
-})
+from foundation import get_sensitive_domains
+
+# Derived from the single sensitive-domain source used by the vault.
+_ENCRYPTED_DOMAINS: frozenset[str] = get_sensitive_domains()
 
 # Only connector modules from the connectors package are allowed (§3.9.6)
 _CONNECTOR_PKG = "connectors"
@@ -151,17 +149,8 @@ def _read_state_file(domain: str) -> str:
         return plain.read_text(encoding="utf-8")
 
     if encrypted.exists():
-        import vault  # type: ignore[import]
-        privkey = vault.get_private_key()
-        with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-        try:
-            ok = vault.age_decrypt(privkey, encrypted, tmp_path)
-            if not ok:
-                raise RuntimeError(f"age decrypt failed for {domain}.md.age")
-            return tmp_path.read_text(encoding="utf-8")
-        finally:
-            tmp_path.unlink(missing_ok=True)
+        from foundation import get_age_vault
+        return get_age_vault(state_dir=_STATE_DIR).read(domain)
 
     raise FileNotFoundError(f"No state file found for domain '{domain}'")
 
@@ -170,19 +159,29 @@ def _write_state_file(domain: str, content: str) -> bool:
     """Write content to state/{domain}.md. Returns True if encrypted afterwards."""
     domain = domain.removesuffix(".md")
     plain = _STATE_DIR / f"{domain}.md"
-    plain.write_text(content, encoding="utf-8")
-
-    if domain not in _ENCRYPTED_DOMAINS:
-        return False
-
-    import vault  # type: ignore[import]
-    pubkey = vault.get_public_key()
     encrypted = _STATE_DIR / f"{domain}.md.age"
-    ok = vault.age_encrypt(pubkey, plain, encrypted)
-    if not ok:
-        raise RuntimeError(f"age encrypt failed for domain '{domain}'")
-    plain.unlink()
-    return True
+    if domain in _ENCRYPTED_DOMAINS or encrypted.exists():
+        from foundation import get_age_vault
+        vault = get_age_vault(state_dir=_STATE_DIR)
+        _, expected_revision = vault.read_versioned(domain)
+        vault.write(domain, content, expected_revision=expected_revision)
+        return True
+
+    from lib.state_writer import create_if_absent_token, read_versioned, write
+    expected_token = (
+        read_versioned(plain)[1] if plain.exists() else create_if_absent_token(plain)
+    )
+    result = write(
+        plain,
+        content,
+        domain=domain,
+        source="mcp_server",
+        expected_token=expected_token,
+        snapshot=plain.resolve().is_relative_to(_REPO_ROOT),
+    )
+    if not result.success:
+        raise RuntimeError(f"state write refused for domain '{domain}'")
+    return False
 
 
 def _known_domains() -> frozenset[str]:

@@ -308,7 +308,7 @@ class VaultAccessGuardrail(BaseGuardrail):
             result = check_file_readable(str(filepath))
             if not result.get("readable", True):
                 reason = result.get("reason", "locked")
-                hint = result.get("hint", "Run: python scripts/vault.py decrypt")
+                hint = result.get("hint", "Run: python scripts/vault.py read <domain>")
                 return GuardrailOutput(
                     TripwireResult.HALT,
                     message=f"🔒 Vault required: {reason}. {hint}",

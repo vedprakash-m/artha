@@ -739,7 +739,7 @@ class TestAdvisoryLock:
     def test_acquire_and_release(self, mock_vault_env):
         """Lock can be acquired and released cleanly."""
         assert vault._acquire_op_lock()
-        lock_path = foundation._config["ARTHA_DIR"] / ".artha-op-lock"
+        lock_path = vault._operation_lock_path()
         assert lock_path.exists()
         vault._release_op_lock()
         # After release, can acquire again
@@ -751,7 +751,7 @@ class TestAdvisoryLock:
         fcntl = pytest.importorskip("fcntl", reason="fcntl is Unix-only")
         assert vault._acquire_op_lock()
         # Open a second fd to the same file — should fail to flock
-        lock_path = foundation._config["ARTHA_DIR"] / ".artha-op-lock"
+        lock_path = vault._operation_lock_path()
         fd2 = open(lock_path, "w")
         try:
             fcntl.flock(fd2, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -801,6 +801,17 @@ class TestSyncFence:
         monkeypatch.setitem(foundation._config, "ARTHA_DIR",
                             Path("/Users/test/Library/CloudStorage/OneDrive/Artha"))
         assert vault._is_cloud_synced() is True
+
+    def test_bulk_decrypt_refuses_cloud_synced_workspace(self, mock_vault_env, monkeypatch):
+        monkeypatch.setattr(vault, "_is_cloud_synced", lambda: True)
+        monkeypatch.setattr(
+            vault,
+            "_ensure_encryption_ready",
+            lambda: (_ for _ in ()).throw(AssertionError("refusal was too late")),
+        )
+        with pytest.raises(SystemExit) as exc:
+            vault.do_decrypt()
+        assert exc.value.code == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1160,6 +1171,9 @@ class TestVaultHookFallback:
         )
 
 
+_VaultError = type("VaultError", (RuntimeError,), {})
+
+
 class TestInMemoryWrite:
     """`vault.py write <domain>` is the in-memory counterpart of `read` (re-artha 10.6)."""
 
@@ -1173,17 +1187,26 @@ class TestInMemoryWrite:
             def __init__(self, state_dir, *, identity, recipient):
                 written["init"] = (state_dir, recipient)
 
-            def write(self, name, text):
-                written["call"] = (name, text)
+            def write(self, name, text, *, expected_revision=None):
+                written["call"] = (name, text, expected_revision)
                 return tmp_path / f"{name}.md.age"
 
-        monkeypatch.setitem(sys.modules, "catchup_core.vault", types.SimpleNamespace(AgeVault=FakeVault))
+        monkeypatch.setitem(
+            sys.modules,
+            "catchup_core.vault",
+            types.SimpleNamespace(
+                AgeVault=FakeVault,
+                VaultError=_VaultError,
+                VaultConflict=type("VaultConflict", (_VaultError,), {}),
+                VaultUncertain=type("VaultUncertain", (_VaultError,), {}),
+            ),
+        )
         monkeypatch.setattr(vault, "get_public_key", lambda: "age1pub")
         monkeypatch.setattr(vault, "get_private_key", lambda: "AGE-SECRET-KEY-1")
         monkeypatch.setattr(sys, "stdin", io.StringIO("---\ndomain: kids\n---\nbody\n"))
-        vault.do_write("kids")
-        assert written["call"] == ("kids", "---\ndomain: kids\n---\nbody\n")
-        assert "wrote kids.md.age" in capsys.readouterr().out
+        vault.do_write("kids", expected_revision="a" * 64)
+        assert written["call"] == ("kids", "---\ndomain: kids\n---\nbody\n", "a" * 64)
+        assert "committed kids.md.age" in capsys.readouterr().out
         assert not (tmp_path / "kids.md").exists()
 
     def test_write_failure_exits_nonzero_and_names_the_domain(self, monkeypatch, capsys):
@@ -1194,12 +1217,83 @@ class TestInMemoryWrite:
             def __init__(self, *a, **k):
                 raise RuntimeError("no key")
 
-        monkeypatch.setitem(sys.modules, "catchup_core.vault", types.SimpleNamespace(AgeVault=Broken))
+        monkeypatch.setitem(
+            sys.modules,
+            "catchup_core.vault",
+            types.SimpleNamespace(
+                AgeVault=Broken,
+                VaultError=_VaultError,
+                VaultConflict=type("VaultConflict", (_VaultError,), {}),
+                VaultUncertain=type("VaultUncertain", (_VaultError,), {}),
+            ),
+        )
         monkeypatch.setattr(vault, "get_public_key", lambda: "age1pub")
         monkeypatch.setattr(vault, "get_private_key", lambda: "k")
         with pytest.raises(SystemExit) as exc:
-            vault.do_write("kids")
+            vault.do_write("kids", expected_revision="a" * 64)
         assert exc.value.code == 1 and "Error writing kids" in capsys.readouterr().err
+
+    def test_write_stale_revision_maps_to_refused_exit(self, monkeypatch, capsys, tmp_path):
+        import io
+        import sys
+        import types
+
+        class VaultConflict(_VaultError):
+            pass
+
+        class VaultUncertain(_VaultError):
+            pass
+
+        class StaleVault:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def write(self, *args, **kwargs):
+                raise VaultConflict("changed")
+
+        monkeypatch.setitem(
+            sys.modules,
+            "catchup_core.vault",
+            types.SimpleNamespace(
+                AgeVault=StaleVault,
+                VaultError=_VaultError,
+                VaultConflict=VaultConflict,
+                VaultUncertain=VaultUncertain,
+            ),
+        )
+        monkeypatch.setattr(vault, "get_public_key", lambda: "age1pub")
+        monkeypatch.setattr(vault, "get_private_key", lambda: "AGE-SECRET-KEY-1")
+        monkeypatch.setattr(sys, "stdin", io.StringIO("---\ndomain: kids\n---\n"))
+        with pytest.raises(SystemExit) as exc:
+            vault.do_write("kids", expected_revision="a" * 64)
+        assert exc.value.code == 20
+        assert "refused" in capsys.readouterr().err
+
+    def test_read_json_returns_content_and_revision(self, monkeypatch, capsys):
+        import json
+        import types
+        import sys
+
+        class FakeVault:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def read_versioned(self, domain):
+                assert domain == "kids"
+                return "synthetic", "b" * 64
+
+        monkeypatch.setitem(
+            sys.modules,
+            "catchup_core.vault",
+            types.SimpleNamespace(AgeVault=FakeVault),
+        )
+        monkeypatch.setattr(vault, "get_public_key", lambda: "age1pub")
+        monkeypatch.setattr(vault, "get_private_key", lambda: "AGE-SECRET-KEY-1")
+        vault.do_read("kids", json_output=True)
+        assert json.loads(capsys.readouterr().out) == {
+            "content": "synthetic",
+            "revision": "b" * 64,
+        }
 
     @pytest.mark.parametrize("encrypt_side_effect", [None, SystemExit(1)])
     def test_stale_lock_reentry_preserves_lock_on_failed_reencrypt(

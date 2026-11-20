@@ -81,12 +81,22 @@ def _write_stored_version(version: str) -> None:
     """Write or update artha_version in state/health-check.md."""
     if not _HEALTH_CHECK.exists():
         return
-    text = _HEALTH_CHECK.read_text(encoding="utf-8")
+    from lib.state_writer import read_versioned, write
+    text, expected_token = read_versioned(_HEALTH_CHECK)
     if re.search(r"artha_version:", text):
         text = re.sub(r"artha_version:\s*\S+", f"artha_version: {version}", text)
     else:
         text += f"\nartha_version: {version}\n"
-    _HEALTH_CHECK.write_text(text, encoding="utf-8")
+    result = write(
+        _HEALTH_CHECK,
+        text,
+        domain="health-check",
+        source="upgrade",
+        expected_token=expected_token,
+        pii_check=False,
+    )
+    if not result.success:
+        raise OSError("health-check.md version write was refused")
 
 
 # ---------------------------------------------------------------------------

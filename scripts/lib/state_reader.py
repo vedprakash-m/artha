@@ -144,7 +144,7 @@ class StateReader:
         """Return the decrypted text content of *domain_name*'s state file.
 
         If the domain has requires_vault: true, this method attempts age-cli
-        decryption via scripts/vault.py decrypt.  If vault tooling is
+        in-memory decryption (vault.py read).  If vault tooling is
         unavailable, raises VaultPolicyViolation (do NOT fall back to plaintext).
 
         If the domain has requires_vault: false, reads plaintext directly.

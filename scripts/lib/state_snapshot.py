@@ -25,7 +25,7 @@ _DEFAULT_MAX_AGE_HOURS: float = 24.0
 # Opaque domain/workspace prefix, UTC timestamp and write-once identity.
 _TS_FORMAT = "%Y%m%dT%H%M%S"
 _SNAP_RE = re.compile(
-    r"^([0-9a-f]{32})_(\d{8}T\d{6})_([0-9a-f]{32})\.snap\.age$"
+    r"^([0-9a-f]{32})(?:_([0-9a-f]{32}))?_(\d{8}T\d{6})_([0-9a-f]{32})\.snap\.age$"
 )
 
 
@@ -83,9 +83,25 @@ def _ensure_private_directory(path: Path) -> None:
         raise ValueError("State snapshot directory is not owner-private")
 
 
-def _snapshot_prefix(domain: str, artha_dir: Optional[Path] = None) -> str:
-    identity = f"{_workspace_root(artha_dir)}\0{domain}".encode("utf-8")
-    return hashlib.sha256(identity).hexdigest()[:32]
+def _snapshot_prefix(
+    domain: str,
+    artha_dir: Optional[Path] = None,
+    target: Path | str | None = None,
+) -> str:
+    target_identity = ""
+    if target is not None:
+        candidate = Path(target).resolve()
+        try:
+            target_identity = candidate.relative_to(_workspace_root(artha_dir)).as_posix()
+        except ValueError:
+            target_identity = candidate.as_posix()
+    domain_prefix = hashlib.sha256(
+        f"{_workspace_root(artha_dir)}\0{domain}".encode("utf-8")
+    ).hexdigest()[:32]
+    if not target_identity:
+        return domain_prefix
+    target_prefix = hashlib.sha256(target_identity.encode("utf-8")).hexdigest()[:32]
+    return f"{domain_prefix}_{target_prefix}"
 
 
 def _ts_now() -> str:
@@ -106,6 +122,7 @@ def snapshot(
     domain: str,
     content: str,
     artha_dir: Optional[Path] = None,
+    target: Path | str | None = None,
 ) -> Optional[Path]:
     """Encrypt *content* in owner-private machine-local snapshot storage.
 
@@ -132,7 +149,7 @@ def snapshot(
         vault = _vault_for_snapshots(sdir)
         ciphertext = vault.encrypt_artifact(content)
         snap_path = sdir / (
-            f"{_snapshot_prefix(domain, artha_dir)}_{_ts_now()}_"
+            f"{_snapshot_prefix(domain, artha_dir, target)}_{_ts_now()}_"
             f"{uuid.uuid4().hex}.snap.age"
         )
         from catchup_core.blobs import private_atomic_bytes  # noqa: PLC0415
@@ -155,6 +172,7 @@ def snapshot(
 def list_snapshots(
     domain: str,
     artha_dir: Optional[Path] = None,
+    target: Path | str | None = None,
 ) -> list[Path]:
     """Return all snapshots for *domain*, newest first.
 
@@ -172,12 +190,12 @@ def list_snapshots(
         return []
     if not sdir.exists():
         return []
-    prefix = _snapshot_prefix(domain, artha_dir)
+    prefix = _snapshot_prefix(domain, artha_dir, target)
     matches = [p for p in sdir.glob(f"{prefix}_*.snap.age") if _SNAP_RE.match(p.name)]
     return sorted(
         matches,
         key=lambda p: (
-            _SNAP_RE.match(p.name).group(2),
+            _SNAP_RE.match(p.name).group(3),
             p.stat().st_mtime_ns,
             p.name,
         ),
@@ -188,6 +206,7 @@ def list_snapshots(
 def restore_latest(
     domain: str,
     artha_dir: Optional[Path] = None,
+    target: Path | str | None = None,
 ) -> Optional[str]:
     """Return the content of the most recent snapshot for *domain*.
 
@@ -198,7 +217,7 @@ def restore_latest(
     Returns:
         Content string, or ``None`` if no snapshot exists or on read error.
     """
-    snaps = list_snapshots(domain, artha_dir=artha_dir)
+    snaps = list_snapshots(domain, artha_dir=artha_dir, target=target)
     if not snaps:
         return None
     try:
@@ -211,6 +230,7 @@ def restore_latest(
 def prune(
     domain: str,
     artha_dir: Optional[Path] = None,
+    target: Path | str | None = None,
     max_keep: int = _DEFAULT_MAX_KEEP,
     max_age_hours: float = _DEFAULT_MAX_AGE_HOURS,
     *,
@@ -241,7 +261,7 @@ def prune(
     if authorized is not True:
         raise PermissionError("State snapshot pruning requires explicit authorization")
 
-    snaps = list_snapshots(domain, artha_dir=artha_dir)
+    snaps = list_snapshots(domain, artha_dir=artha_dir, target=target)
     now = datetime.now(timezone.utc)
     deleted = 0
 
@@ -251,7 +271,7 @@ def prune(
             m = _SNAP_RE.match(snap.name)
             if m:
                 try:
-                    ts = datetime.strptime(m.group(2), _TS_FORMAT).replace(tzinfo=timezone.utc)
+                    ts = datetime.strptime(m.group(3), _TS_FORMAT).replace(tzinfo=timezone.utc)
                     if (now - ts).total_seconds() / 3600.0 > max_age_hours:
                         remove = True
                 except ValueError:

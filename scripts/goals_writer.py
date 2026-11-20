@@ -81,32 +81,32 @@ def _serialized(operation):
 
 def write_state_atomic(path: Path, content: str, *, expected_content: str | None = None) -> None:
     """Atomic write: tmp → validate → os.replace."""
-    from catchup_core.session_lock import require_active_installation
+    from lib.state_writer import StateWriteConflict, create_if_absent_token, read_versioned, write
+
     target = Path(path)
-    require_active_installation(target)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp_fd, tmp_path = tempfile.mkstemp(dir=target.parent, suffix=".tmp", prefix=".gw-")
-    try:
-        with os.fdopen(tmp_fd, "w", encoding="utf-8", newline="") as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
-        _split_frontmatter(content)               # raises on frontmatter that would not read back
-        if expected_content is not None and _read_text(target) != expected_content:
+    _split_frontmatter(content)
+    if target.exists():
+        observed_content, expected_token = read_versioned(target)
+        if expected_content is not None and observed_content != expected_content:
             raise ValueError("Goal file changed since it was read; retry from the new version")
-        os.replace(tmp_path, target)
-        if os.name != "nt":
-            directory = os.open(target.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    elif expected_content is not None:
+        raise ValueError("Goal file changed since it was read; retry from the new version")
+    else:
+        expected_token = create_if_absent_token(target)
+    try:
+        result = write(
+            target,
+            content,
+            domain="goals",
+            source="goals_writer",
+            expected_token=expected_token,
+            snapshot=target.resolve().is_relative_to(_ARTHA_DIR),
+            pii_check=False,
+        )
+    except StateWriteConflict as exc:
+        raise ValueError("Goal file changed since it was read; retry from the new version") from exc
+    if not result.success:
+        raise OSError("Goal State File write was refused")
 
 _VALID_STATUSES = {"active", "parked", "done", "dropped"}
 _VALID_TYPES = {"outcome", "habit", "milestone"}

@@ -507,12 +507,16 @@ class SLOEngine:
             )
         section_text = "".join(lines)
 
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(section_text, encoding="utf-8")
-            return
+        from lib.state_writer import create_if_absent_token, read_versioned, write
 
-        content = path.read_text(encoding="utf-8")
+        if path.exists():
+            content, expected_token = read_versioned(path)
+        else:
+            content = (
+                "---\nschema_version: '1.0'\ndomain: health-check\n"
+                "last_updated: 'unknown'\n---\n"
+            )
+            expected_token = create_if_absent_token(path)
 
         # Replace existing SLO Status section if present
         import re
@@ -522,20 +526,17 @@ class SLOEngine:
         else:
             new_content = content.rstrip("\n") + "\n\n" + section_text
 
-        # Atomic write
-        import tempfile
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".slo_")
-        try:
-            os.write(fd, new_content.encode("utf-8"))
-            os.close(fd)
-            os.replace(tmp, path)
-        except Exception:
-            os.close(fd)
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        result = write(
+            path,
+            new_content,
+            domain="health-check",
+            source="slo_engine",
+            expected_token=expected_token,
+            pii_check=False,
+            snapshot=path.resolve().is_relative_to(Path(self._artha_dir)),
+        )
+        if not result.success:
+            raise OSError("health-check.md SLO update was refused")
 
 
 # ---------------------------------------------------------------------------

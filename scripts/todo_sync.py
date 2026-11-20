@@ -126,8 +126,15 @@ def _parse_open_items(content: str) -> list[dict]:
 
 def _write_todo_id(item_id: str, todo_id: str) -> None:
     """Update the todo_id field for a specific item in open_items.md."""
-    with open(OPEN_ITEMS_FILE, encoding='utf-8') as f:
-        content = f.read()
+    from lib.state_writer import StateWriteConflict, read_versioned, write
+
+    target = Path(OPEN_ITEMS_FILE)
+    content, expected_token = read_versioned(target)
+    if not content.startswith("---"):
+        content = (
+            "---\nschema_version: '1.0'\ndomain: open_items\n"
+            "last_updated: ''\n---\n\n" + content
+        )
 
     # Find the id: line and the todo_id line within that item's block
     # Pattern: after `- id: {item_id}`, find `  todo_id: ...` in the same block
@@ -141,14 +148,34 @@ def _write_todo_id(item_id: str, todo_id: str) -> None:
         print(f"[todo_sync] ⚠ Could not update todo_id for {item_id}", file=sys.stderr)
         return
 
-    with open(OPEN_ITEMS_FILE, "w", encoding='utf-8') as f:
-        f.write(updated)
+    try:
+        result = write(
+            target,
+            updated,
+            domain="open_items",
+            source="todo_sync",
+            expected_token=expected_token,
+            pii_check=False,
+            snapshot=target.resolve().is_relative_to(Path(__file__).resolve().parent.parent),
+        )
+    except StateWriteConflict as exc:
+        print(f"[todo_sync] REFUSED: {exc}; todo_id was not persisted", file=sys.stderr)
+        return
+    if not result.success:
+        print("[todo_sync] REFUSED: open_items.md was not changed", file=sys.stderr)
 
 
 def _write_item_status(item_id: str, new_status: str, date_resolved: str) -> None:
     """Update the status field and (optionally) date_resolved for an item."""
-    with open(OPEN_ITEMS_FILE, encoding='utf-8') as f:
-        content = f.read()
+    from lib.state_writer import StateWriteConflict, read_versioned, write
+
+    target = Path(OPEN_ITEMS_FILE)
+    content, expected_token = read_versioned(target)
+    if not content.startswith("---"):
+        content = (
+            "---\nschema_version: '1.0'\ndomain: open_items\n"
+            "last_updated: ''\n---\n\n" + content
+        )
 
     # Update status
     pattern = re.compile(
@@ -168,8 +195,21 @@ def _write_item_status(item_id: str, new_status: str, date_resolved: str) -> Non
             flags=re.DOTALL,
         )
 
-    with open(OPEN_ITEMS_FILE, "w", encoding='utf-8') as f:
-        f.write(updated)
+    try:
+        result = write(
+            target,
+            updated,
+            domain="open_items",
+            source="todo_sync",
+            expected_token=expected_token,
+            pii_check=False,
+            snapshot=target.resolve().is_relative_to(Path(__file__).resolve().parent.parent),
+        )
+    except StateWriteConflict as exc:
+        print(f"[todo_sync] REFUSED: {exc}; status was not persisted", file=sys.stderr)
+        return
+    if not result.success:
+        print("[todo_sync] REFUSED: open_items.md was not changed", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
