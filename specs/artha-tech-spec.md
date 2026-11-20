@@ -7207,6 +7207,7 @@ Light mode runs `brief`, `items`, `goals` and `domain` from State Files with the
 | `scripts/lib/write_refusals.py`, `scripts/write_refusals.py` | Machine-local `~/.artha-local/write-refusals.json`; `health_check_writer` will not advance `last_catch_up` while it is non-empty. `clear` needs an owner terminal. |
 | `scripts/state_restore.py` | `list`, `show`, `apply` (owner terminal) of a previous revision through the normal writer; corrupt current ciphertext is preserved under `~/.artha-local/state-restore-quarantine/` first. |
 | `scripts/vault.py` | Bulk `decrypt` is refused inside a cloud-synced workspace; `read --json` / `write --expected-revision`; `read-file` (owner terminal); foreign-host session markers are never probed or changed. |
+| `scripts/handoff.py auto-seal` | Stop-hook form of `seal` (D-10): Light mode only; seals when no manifest exists or this laptop has accepted the current one and the in-scope files changed; same conflict and write-refusal refusals; records the sealing laptop's acceptance; exits 0 always, printing only a refusal. |
 | `scripts/tool_guard.py` | Warns on native writes to allowlisted files beside a conflict copy; refuses them when Light mode is effective and the handoff is unverified; denies `handoff.py seal`, `write_refusals.py clear`, `state_restore.py apply` to agents. |
 | `scripts/preflight.py --handoff-check` | Reports effective mode and handoff result. An unverified handoff is a P1: read-only use, not a NO-GO. |
 

@@ -8,6 +8,11 @@ the primary protection.
 
 ## Before a handoff
 
+The seal is normally automatic: a Stop hook runs `handoff.py auto-seal` after each turn on the active laptop. It seals
+only in Light mode, only when this laptop has accepted the current manifest and the in-scope files changed, and it
+keeps every refusal (conflict copy, uninspected write refusal). It prints nothing unless it refused. To seal by hand
+(first seal, or after a refusal):
+
 1. Finish the session and stop scheduled/background Artha writers on the outgoing laptop.
 2. Wait until OneDrive reports that the folder is up to date.
 3. Run:

@@ -271,8 +271,8 @@ def check_light_handoff() -> CheckResult:
         "P1",
         result.status == "verified",
         result.message if result.status == "verified" else f"read-only until verified: {result.message}",
-        fix_hint="On the laptop you are leaving, run handoff.py seal --owner-confirmed "
-                 "after OneDrive reports up to date, then verify here before writes.",
+        fix_hint="Wait for OneDrive to finish syncing; the other laptop seals automatically at the end of a turn. "
+                 "If it stays unverified, run handoff.py seal --owner-confirmed there.",
     )
 
 

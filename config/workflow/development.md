@@ -21,7 +21,8 @@
 
 The Mac and the Windows laptop share this working tree through OneDrive. Before editing, run `git status` and
 look at recently modified files; never edit, stage or reformat another machine's uncommitted changes. Use
-`handoff.py seal --owner-confirmed` only after OneDrive reports up to date on the outgoing laptop, then
-`preflight.py --handoff-check` on the incoming laptop. The check cannot prove that an offline laptop has no pending
+the automatic seal (Stop hook, `handoff.py auto-seal`) on the laptop that is already active; the incoming laptop
+checks it with `preflight.py --handoff-check` once OneDrive reports up to date. `handoff.py seal --owner-confirmed`
+remains the manual, owner-terminal form (first seal, or after the hook refused). The check cannot prove that an offline laptop has no pending
 upload, so one laptop remains the supported writer. Keep commits local unless the owner separately directs a push.
 Never run two Catch-ups or two vault/encrypt operations at once.

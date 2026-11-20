@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from lib.light_mode import host_id, require_owner_terminal
+from lib.light_mode import configured_cutover, host_id, require_owner_terminal
 from lib.state_targets import light_markdown_targets, relative_name
 from lib.sync_conflicts import ConflictScanUnknown, find_conflicts
 from lib.local_paths import local_dir
@@ -279,9 +279,60 @@ def _manifest_conflicts(
     return None
 
 
+def auto_seal(
+    root: Path,
+    *,
+    targets: Iterable[Path] | None = None,
+    now: datetime | None = None,
+    hostname: str | None = None,
+) -> HandoffResult:
+    """Seal automatically at the end of a session, for the laptop that is already the active one.
+
+    It seals only in Light mode, only when no manifest exists yet or this laptop has accepted the
+    current one, and only when the in-scope files changed. It keeps every ``seal`` refusal
+    (conflict copies, uninspected write refusals). The sealing laptop records its own acceptance,
+    so its later edits are not read as a mismatch. It cannot know the other laptop is stopped.
+    """
+    root = Path(root)
+    if configured_cutover(root):
+        return HandoffResult("skipped", "the Engine is enabled; Light-mode handoff does not apply")
+    selected = _targets(root, targets)
+    manifest = _manifest_path(root)
+    if manifest.is_file():
+        state = verify(root, targets=selected, now=now, record=False)
+        if state.status != "verified" and state.message.startswith("conflict copy present"):
+            return HandoffResult("refused", state.message)
+        if state.status != "verified":
+            return HandoffResult("skipped", f"not the active laptop: {state.message}")
+        try:
+            sealed = json.loads(manifest.read_text(encoding="utf-8")).get("files")
+        except (OSError, UnicodeDecodeError, ValueError):
+            sealed = None
+        current = {relative_name(path, root): _digest(path) for path in selected}
+        if sealed == current:
+            return HandoffResult("skipped", "nothing changed since the last seal")
+    result = seal(root, targets=selected, owner_confirmed_sync=True, now=now, hostname=hostname)
+    if result.status != "sealed":
+        return result
+    stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    try:
+        _atomic_json(
+            _acceptance_path(root),
+            {
+                "schema_version": 1,
+                "manifest_revision": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                "accepted_at": stamp.isoformat(timespec="seconds"),
+                "host": hostname or host_id(),
+            },
+        )
+    except OSError as exc:
+        return HandoffResult("refused", f"sealed, but local acceptance could not be recorded: {type(exc).__name__}")
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Light-mode laptop handoff")
-    parser.add_argument("command", choices=("seal", "verify"))
+    parser.add_argument("command", choices=("seal", "verify", "auto-seal"))
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument(
         "--owner-confirmed",
@@ -293,6 +344,13 @@ def main(argv: list[str] | None = None) -> int:
         if not require_owner_terminal("handoff.py seal"):
             return 20
         result = seal(args.root, owner_confirmed_sync=args.owner_confirmed)
+    elif args.command == "auto-seal":
+        # Runs from the session-end hook: never fails the session, quiet unless something needs attention.
+        result = auto_seal(args.root)
+        if result.status in {"sealed", "skipped"}:
+            return 0
+        print(f"handoff not sealed ({result.status}): {result.message}", file=sys.stderr)
+        return 0
     else:
         result = verify(args.root)
     stream = sys.stdout if result.status in {"sealed", "verified"} else sys.stderr

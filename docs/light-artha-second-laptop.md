@@ -1,6 +1,7 @@
 # Light Artha second-laptop checklist
 
 Complete on the incoming laptop before it becomes an active writer.
+Commands below use `python3` on macOS and Linux; use `python` on Windows.
 
 1. Verify the canonical checkout is on `main` and preserve all uncommitted work.
 2. Install `age`; run `python3 scripts/vault.py health`.
@@ -14,10 +15,11 @@ Complete on the incoming laptop before it becomes an active writer.
    `python3 scripts/state_guard.py snapshot`.
 7. Report the effective Engine mode:
    `python3 scripts/catchup_core/cli.py health --json`.
-8. Stop and confirm OneDrive "up to date" on the outgoing laptop, then run:
+8. The outgoing laptop seals automatically (Stop hook, `handoff.py auto-seal`). Confirm OneDrive "up to date" there; if
+   the hook refused or never ran, run:
    `python3 scripts/handoff.py seal --owner-confirmed`.
 9. On the incoming laptop run:
-   `python3 scripts/preflight.py --handoff-check`.
+   `python3 scripts/preflight.py --handoff-check --read-only`.
 10. Treat `unverified` as read-only. The local check cannot prove that an offline
     laptop has no pending upload.
 
