@@ -20,8 +20,6 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
-from lib.light_mode import describe_cutover, effective_cutover
-
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 # Launched as a script, this package's own directory leads sys.path and its actions.py would shadow scripts/actions/.
 sys.path[:] = [entry for entry in sys.path if Path(entry or ".").resolve() != Path(__file__).resolve().parent]
@@ -45,6 +43,7 @@ from catchup_core.exchange import (  # noqa: E402
     render_bundle,
 )
 from catchup_core.ledger import LedgerError, PermissionDenied  # noqa: E402
+from lib.light_mode import describe_cutover, effective_cutover  # noqa: E402
 
 __all__ = ["main", "parse_args"]
 
@@ -368,7 +367,7 @@ def _run_inspection(args: argparse.Namespace) -> dict[str, Any]:
     if args.command == "ingest":
         from catchup_core.documents import _require_personal_document_admission  # noqa: PLC0415
         _require_personal_document_admission()
-    from catchup_core.runtime import build_deps, inspection_freshness, load_runtime_config  # noqa: PLC0415
+    from catchup_core.runtime import build_deps, inspection_freshness, load_runtime_config, local_root  # noqa: PLC0415
     from catchup_core.session_lock import session_lock  # noqa: PLC0415
     root = Path(__file__).resolve().parents[2]
     deps = None
@@ -376,6 +375,12 @@ def _run_inspection(args: argparse.Namespace) -> dict[str, Any]:
         if args.command == "migrate":
             return _run_migration(args, root)
         config = load_runtime_config(root / "config" / "catchup_core.yaml")
+        if args.command == "health" and not (local_root() / "ledger.db").is_file():
+            return {
+                "initialized": False,
+                "status": "not_initialized",
+                "message": "Engine ledger is machine-local and has not been initialized on this laptop",
+            }
         request = CatchupRequest(f"view_{uuid.uuid4().hex[:12]}", args.actor or config.viewer, "cli",
             mode=ExecutionMode.SHADOW if args.shadow else ExecutionMode.AUTHORITATIVE,
             host=socket.gethostname().split(".")[0])

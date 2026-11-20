@@ -175,6 +175,35 @@ def test_health_inspection_reports_light_mode_when_config_load_fails(monkeypatch
     assert json.loads(stdout.getvalue())["light_mode"]["enabled"] is False
 
 
+def test_health_inspection_reports_uninitialized_machine_without_creating_ledger(
+    tmp_path, monkeypatch
+):
+    from catchup_core import runtime
+
+    monkeypatch.setattr(
+        runtime,
+        "load_runtime_config",
+        lambda _path: types.SimpleNamespace(viewer="owner"),
+    )
+    monkeypatch.setattr(runtime, "local_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        runtime,
+        "build_deps",
+        lambda *_args, **_kwargs: pytest.fail("an uninitialized laptop must not open a ledger"),
+    )
+
+    result = cli._run_inspection(
+        Namespace(command="health", actor=None, shadow=True)
+    )
+
+    assert result == {
+        "initialized": False,
+        "status": "not_initialized",
+        "message": "Engine ledger is machine-local and has not been initialized on this laptop",
+    }
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_bundle_enroll_command_prints_the_secret_once_and_export_demands_configuration(monkeypatch):
     store = {}
     fake = types.SimpleNamespace(get_password=lambda s, n: store.get((s, n)),

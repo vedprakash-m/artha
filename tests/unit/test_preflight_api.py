@@ -46,6 +46,14 @@ class TestCheckScriptHealth:
             result = pf.check_script_health("action_bridge.py", ["--health"])
             assert isinstance(result, pf.CheckResult)
 
+    def test_read_only_marks_health_subprocess(self, monkeypatch):
+        monkeypatch.setattr(api_checks, "_READ_ONLY", True)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            pf.check_script_health("action_bridge.py", ["--health"])
+
+        assert mock_run.call_args.kwargs["env"]["ARTHA_PREFLIGHT_READ_ONLY"] == "1"
+
 
 # ---------------------------------------------------------------------------
 # T5-24..25: check_pii_guard

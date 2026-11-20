@@ -355,6 +355,9 @@ def test_cli_inspection_closes_storage_and_keeps_errors_on_stderr(app, monkeypat
     assert json.loads(stdout.getvalue())["beliefs"] and stderr.getvalue() == ""
     stdout, stderr = io.StringIO(), io.StringIO()
     monkeypatch.setattr(runtime, "build_deps", lambda *_, **__: (_ for _ in ()).throw(ValueError("locked")))
+    # `health` answers "not initialized" without a machine-local ledger; give it one so the error path runs.
+    (root / "ledger.db").write_bytes(b"")
+    monkeypatch.setattr(runtime, "local_root", lambda: root)
     assert cli.main(["health"], out=stdout, err=stderr) == 20 and "locked" in stderr.getvalue()
 
 

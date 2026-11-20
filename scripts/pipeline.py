@@ -2158,7 +2158,8 @@ def run_health_checks(
         # Always print per-connector status — silence is ambiguous for health gates
         print(f"[health] {status} {name}", file=sys.stderr)
 
-    _write_health_report(results)
+    if os.environ.get("ARTHA_PREFLIGHT_READ_ONLY") != "1":
+        _write_health_report(results)
 
     failed = [name for name, ok in results if not ok]
     if failed:

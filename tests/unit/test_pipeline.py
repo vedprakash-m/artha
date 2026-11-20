@@ -289,6 +289,23 @@ class TestRunHealthChecks:
         result = run_health_checks(sample_cfg)
         assert result == 1
 
+    @patch("pipeline._write_health_report")
+    @patch("pipeline._load_handler")
+    @patch("pipeline.load_auth_context")
+    def test_read_only_preflight_does_not_write_health_report(
+        self, mock_auth, mock_handler, mock_report, sample_cfg, monkeypatch
+    ):
+        from pipeline import run_health_checks
+
+        handler_mod = MagicMock()
+        handler_mod.health_check.return_value = True
+        mock_handler.return_value = handler_mod
+        mock_auth.return_value = {"token": "fake"}
+        monkeypatch.setenv("ARTHA_PREFLIGHT_READ_ONLY", "1")
+
+        assert run_health_checks(sample_cfg) == 0
+        mock_report.assert_not_called()
+
     @patch("pipeline._load_handler")
     @patch("pipeline.load_auth_context")
     def test_healthy_connector_always_printed_without_verbose(self, mock_auth, mock_handler, sample_cfg, capsys):

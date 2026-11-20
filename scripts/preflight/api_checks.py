@@ -13,6 +13,7 @@ from preflight._types import (
 )
 
 _WARNING_LINE = re.compile(r":\d+: \w*Warning: ")
+_READ_ONLY = False
 
 
 def _without_warnings(output: str) -> list[str]:
@@ -54,10 +55,16 @@ def check_script_health(
             fix_hint=f"Restore {script_name} from source control",
         )
 
+    child_env = dict(_SUBPROCESS_ENV)
+    if _READ_ONLY:
+        child_env["ARTHA_PREFLIGHT_READ_ONLY"] = "1"
+    else:
+        child_env.pop("ARTHA_PREFLIGHT_READ_ONLY", None)
+
     result = subprocess.run(
         [sys.executable, script_path] + args,
         capture_output=True, text=True, cwd=ARTHA_DIR,
-        timeout=45, env=_SUBPROCESS_ENV, encoding="utf-8", errors="replace",
+        timeout=45, env=child_env, encoding="utf-8", errors="replace",
     )
 
     if result.returncode == 0:

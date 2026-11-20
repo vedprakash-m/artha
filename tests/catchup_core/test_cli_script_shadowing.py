@@ -6,6 +6,19 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
 
+def test_direct_script_launch_bootstraps_scripts_path():
+    cli = SCRIPTS / "catchup_core" / "cli.py"
+    done = subprocess.run(
+        [sys.executable, "-I", str(cli), "--help"],
+        cwd=SCRIPTS.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr[-600:]
+    assert "usage:" in done.stdout
+
+
 def test_script_launch_does_not_shadow_actions_package():
     cli = SCRIPTS / "catchup_core" / "cli.py"
     code = (
