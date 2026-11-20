@@ -436,7 +436,7 @@ h. Collect briefing contribution (1–5 bullet points per domain)
 
 ### Step 7b — Update open_items.md
 After all domains are processed:
-0. **Core-owned Domains.** For Domains whose Open Item ownership has transferred under an approved release,
+0. **Core-owned Domains.** In Light mode (`cutover: false`) nothing is core-owned: skip this step; the finance, kids_school, immigration, health, home and vehicle Domains record Open Items here again (D-08, 2026-11-20). Only when the Engine is the effective mode, for Domains whose Open Item ownership has transferred under an approved release,
    do NOT add or update Open Items here; the core publishes their obligations in `state/core_open_items.md`.
    Existing incumbent entries stay as history. The slice recorded on 2026-10-31 named `kids_school`, `finance`,
    `immigration`, `health`, `home` and `vehicle`; treat incumbent `kids` as `kids_school`. Apply the fence on
