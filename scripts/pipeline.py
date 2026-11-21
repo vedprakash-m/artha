@@ -263,6 +263,8 @@ def _write_platform_skip_sentinel(
     File: state/connectors/<name>_platform_skipped.json
     """
     import json as _json_sent
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return  # tests must not write sentinels into live state
     _artha_dir_sent = Path(__file__).resolve().parent.parent
     sentinel_dir = _artha_dir_sent / "state" / "connectors"
     try:

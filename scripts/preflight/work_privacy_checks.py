@@ -32,6 +32,33 @@ def _default_probe() -> Any:
     return for_installation(_REPO)
 
 
+def check_work_state_integrity(state_dir: Path | None = None) -> CheckResult:
+    """P1 advisory: Work state files parse, and the Work refresh prerequisites exist."""
+    name = "Work state integrity"
+    try:
+        if str(_SCRIPTS) not in sys.path:
+            sys.path.insert(0, str(_SCRIPTS))
+        from work.health import _find_integrity_issues, _refresh_blockers  # noqa: PLC0415
+    except ImportError:
+        return CheckResult(name, "P1", True, "Work code not present on this checkout; skipped")
+    try:
+        target = state_dir or _REPO / "state" / "work"
+        issues = _find_integrity_issues(target)
+        blockers: list[str] = []
+        if state_dir is None:
+            from work_loop import WorkLoop  # noqa: PLC0415
+            blockers = _refresh_blockers(bool(WorkLoop._work_token("msgraph.work")), None)
+        if issues or blockers:
+            detail = "; ".join(issues[:3] + blockers)
+            more = f" (+{len(issues) - 3} more integrity issues)" if len(issues) > 3 else ""
+            return CheckResult(name, "P1", False, f"{detail}{more}",
+                               fix_hint="python scripts/work_reader.py --command health  (lists every issue)")
+        return CheckResult(name, "P1", True, "Work state parses; refresh prerequisites present ✓")
+    except Exception as exc:  # noqa: BLE001 - report, never raise into preflight
+        return CheckResult(name, "P1", False,
+                           f"Work state integrity not verified ({type(exc).__name__})")
+
+
 def check_work_privacy_drift(probe: Callable[[], Any] | None = None) -> CheckResult:
     name = "Work privacy drift"
     try:

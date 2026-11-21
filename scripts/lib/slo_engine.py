@@ -520,7 +520,7 @@ class SLOEngine:
 
         # Replace existing SLO Status section if present
         import re
-        pattern = re.compile(r"## SLO Status\n.*?(?=\n## |\Z)", re.DOTALL)
+        pattern = re.compile(r"## SLO Status\r?\n.*?(?=\r?\n## |\Z)", re.DOTALL)
         if pattern.search(content):
             new_content = pattern.sub(section_text.rstrip("\n"), content)
         else:
