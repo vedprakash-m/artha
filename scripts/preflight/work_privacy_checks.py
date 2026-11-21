@@ -38,16 +38,16 @@ def check_work_state_integrity(state_dir: Path | None = None) -> CheckResult:
     try:
         if str(_SCRIPTS) not in sys.path:
             sys.path.insert(0, str(_SCRIPTS))
-        from work.health import _find_integrity_issues, _refresh_blockers  # noqa: PLC0415
-    except ImportError:
-        return CheckResult(name, "P1", True, "Work code not present on this checkout; skipped")
-    try:
+        from lib.work_state_integrity import find_integrity_issues, refresh_blockers  # noqa: PLC0415
         target = state_dir or _REPO / "state" / "work"
-        issues = _find_integrity_issues(target)
+        issues = find_integrity_issues(target)
         blockers: list[str] = []
         if state_dir is None:
-            from work_loop import WorkLoop  # noqa: PLC0415
-            blockers = _refresh_blockers(bool(WorkLoop._work_token("msgraph.work")), None)
+            try:
+                from work_loop import WorkLoop  # noqa: PLC0415
+            except ImportError:
+                return CheckResult(name, "P1", True, "Work code not present on this checkout; skipped")
+            blockers = refresh_blockers(bool(WorkLoop._work_token("msgraph.work")), None)
         if issues or blockers:
             detail = "; ".join(issues[:3] + blockers)
             more = f" (+{len(issues) - 3} more integrity issues)" if len(issues) > 3 else ""
