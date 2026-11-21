@@ -24,8 +24,10 @@ _DAEMON_SCRIPTS = re.compile(
 
 
 def _default_runner(argv: list[str]) -> tuple[int, str]:
-    proc = subprocess.run(argv, capture_output=True, text=True, timeout=15)
-    return proc.returncode, proc.stdout + proc.stderr
+    # Process listings can contain bytes the locale codec rejects (cp1252 on Windows).
+    proc = subprocess.run(argv, capture_output=True, text=True, timeout=15,
+                          encoding="utf-8", errors="replace")
+    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
 def check_background_footprint(

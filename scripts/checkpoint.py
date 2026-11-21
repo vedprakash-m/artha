@@ -55,9 +55,6 @@ from pathlib import Path
 from typing import Any
 
 import sys
-_scripts_dir = str(Path(__file__).resolve().parent)
-if _scripts_dir not in sys.path:
-    sys.path.insert(0, _scripts_dir)  # lets `from lib...` resolve when imported as scripts.checkpoint
 _lib_dir = str(Path(__file__).resolve().parent / "lib")
 if _lib_dir not in sys.path:
     sys.path.insert(0, _lib_dir)
