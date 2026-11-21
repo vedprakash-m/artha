@@ -101,17 +101,30 @@ def _write_lake(lake_path: Path, fm: dict, entries: list[dict]) -> None:
     )
 
     lake_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=lake_path.parent, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        os.replace(tmp_path, lake_path)
-    except Exception:
+    _publish_atomic(lake_path, content)
+
+
+def _publish_atomic(path: Path, content: str) -> None:
+    """Atomic write that goes through the journaled Work publication boundary when enrolled.
+
+    Unjournaled writes under state/work cause "unjournaled Work member drift" and block Work commands.
+    """
+    from lib import work_publication  # noqa: PLC0415
+
+    def legacy() -> None:
+        fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            os.replace(tmp_path, path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+    work_publication.publish_text(path, content, legacy=legacy)
 
 
 def _validate_entry(entry: dict) -> None:
@@ -267,17 +280,7 @@ def enforce_ttl(
                 existing = []
         combined = existing + month_entries
         content = yaml.dump(combined, default_flow_style=False, allow_unicode=True)
-        fd, tmp = tempfile.mkstemp(dir=archive_dir, suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(content)
-            os.replace(tmp, archive_file)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        _publish_atomic(archive_file, content)
 
     _write_lake(lake_path, fm, keep)
     return len(to_archive)

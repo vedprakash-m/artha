@@ -443,14 +443,22 @@ def run_digest(weeks: int = 1) -> dict:
     # Write Markdown
     md_content = _render_markdown(digest)
     try:
+        from lib import work_publication  # noqa: PLC0415
+
         _OUT_MD.parent.mkdir(parents=True, exist_ok=True)
-        tmp_fd, tmp_path = tempfile.mkstemp(
-            dir=_OUT_MD.parent, prefix=".digest_tmp_", suffix=".md"
-        )
-        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-            fh.write(md_content)
-        os.replace(tmp_path, _OUT_MD)
-    except Exception:
+
+        def _legacy_md() -> None:
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                dir=_OUT_MD.parent, prefix=".digest_tmp_", suffix=".md"
+            )
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                fh.write(md_content)
+            os.replace(tmp_path, _OUT_MD)
+
+        work_publication.publish_text(_OUT_MD, md_content, legacy=_legacy_md)
+    except Exception as exc:
+        if type(exc).__name__ == "WorkPublicationBlocked":
+            raise  # a refused journaled write must not be swallowed
         pass
 
     return digest

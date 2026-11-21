@@ -23,6 +23,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from lib import work_publication
+
 _DEFAULT_AUDIT_FILE: Path = (
     Path(__file__).resolve().parent.parent.parent
     / "state"
@@ -69,7 +71,12 @@ def write_ext_agent_event(
             f"| {ts} | {agent_name} | {event_type} | AR-9 |"
             f" {detail[:_DETAIL_MAX_CHARS]} |\n"
         )
-        with target.open("a", encoding="utf-8") as fh:
-            fh.write(row)
+        def _legacy_append() -> None:
+            with target.open("a", encoding="utf-8") as fh:
+                fh.write(row)
+
+        work_publication.append_text(target, row, legacy=_legacy_append)
     except OSError:
         pass
+    except work_publication.WorkPublicationBlocked as exc:  # best-effort audit: warn, never crash the caller
+        print(f"⚠️  ext_agent_audit: journaled write refused — {exc}", file=sys.stderr)

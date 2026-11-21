@@ -1034,6 +1034,9 @@ Appends `<text>` to `state/work/work-notes.md` with `[quick-capture YYYY-MM-DD]`
 Auto-detects which horizon is due (daily/weekly/monthly/quarterly) and runs the full
 sweep → extract → score → reconcile → synthesize → draft pipeline.
 
+**Before anything else:** run the Step 0 capability and write-path check in `config/reflect-protocol.md`
+(missing Q1/Q2 tools or Work privacy drift means stop; never write `state/work/` with file tools).
+
 **MANDATORY in LLM context:** Before writing any state, you MUST execute the
 Work data collection protocol in `config/reflect-protocol.md`. This requires all six
 protocol queries for the exact reflection window: four WorkIQ queries (emails, meetings,

@@ -28,6 +28,7 @@ from preflight.oauth_checks import check_oauth_token, check_token_freshness, che
 from preflight.api_checks import check_script_health, check_pii_guard
 from preflight.coverage_checks import check_connector_coverage, check_plaintext_in_sync_root
 from preflight.footprint_checks import check_background_footprint
+from preflight.work_privacy_checks import check_work_privacy_drift
 from preflight.state_checks import (
     check_state_directory, check_state_templates, check_open_items,
     check_briefings_directory, check_briefings_archive_coverage,
@@ -176,6 +177,7 @@ def run_preflight(
     checks.append(check_plaintext_in_sync_root())
     checks.append(check_sensitive_file_registry())
     checks.append(check_background_footprint())  # §6.12: PULL only — no jobs, no listeners
+    checks.append(check_work_privacy_drift())  # advisory: unjournaled Work writes block Work commands
 
     # ── P1 — Profile completeness (vm-hardening.md Phase 2.2) ─────────────
     checks.append(check_profile_completeness())

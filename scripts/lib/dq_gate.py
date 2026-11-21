@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import IntEnum
@@ -101,7 +102,12 @@ _PLACEHOLDER_VALUES: frozenset[Any] = frozenset(
 )
 
 # Gate decision log (JSON-lines, rotated at 1 MB)
-_GATE_LOG: Path = STATE_DIR / "work" / "quality_gate.log"
+# High-frequency operational log: kept outside the journaled Work roots (state/work and
+# ~/.artha-local/work) so that every gate decision does not cause Work member drift.
+_GATE_LOG: Path = (
+    Path(os.environ.get("ARTHA_LOCAL_DIR") or Path.home() / ".artha-local").expanduser()
+    / "logs" / "quality_gate.log"
+)
 _GATE_LOG_MAX_BYTES: int = 1_000_000
 
 
@@ -290,7 +296,7 @@ def _log_gate_decision(
     age_days: float = 0.0,
     ttl_days: int = 0,
 ) -> None:
-    """Append one JSON-lines gate decision record to state/work/quality_gate.log.
+    """Append one JSON-lines gate decision record to ~/.artha-local/logs/quality_gate.log.
 
     Silently swallowed on any I/O error — the gate log must never crash the
     read path.

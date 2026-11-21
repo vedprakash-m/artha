@@ -77,6 +77,11 @@ defined in `config/Artha.md`. Execute them exactly as documented in that file.
 commands. They read only from `state/work/` and never access personal state.
 Implementation: `scripts/work_loop.py`, `scripts/work_reader.py`.
 
+**Work state write rule:** never create or edit anything under `state/work/` with file tools. Work state is
+journaled (`lib/work_publication.py`); write it only through the Work scripts. A direct edit causes
+"unjournaled Work member drift" and blocks every Work command until the owner reconciles it. Only one machine
+should write Work state at a time. If preflight reports Work privacy drift, stop and ask the owner.
+
 ---
 
 # CLAUDE.md
