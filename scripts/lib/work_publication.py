@@ -211,7 +211,8 @@ def _read(active: _Session, path: Path) -> bytes | None:
 
 def encode(text: str) -> bytes:
     """Bytes a text-mode legacy writer produces on this platform."""
-    return text.replace('\n', os.linesep).encode('utf-8')
+    # Normalize first: text that already contains CRLF would otherwise become CR CR LF on Windows.
+    return text.replace('\r\n', '\n').replace('\n', os.linesep).encode('utf-8')
 
 
 def decode(raw: bytes) -> str:

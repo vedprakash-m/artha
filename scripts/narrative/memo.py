@@ -51,7 +51,7 @@ def generate_weekly_memo(base: "NarrativeEngineBase", period: Optional[str] = No
     completed_recent = proj_fm.get("completed_recent_count", 0)
     action_required = comms_fm.get("action_required_count", 0)
     boundary_score = boundary_fm.get("boundary_score")
-    after_hours = boundary_fm.get("after_hours_count", 0)
+    after_hours = boundary_fm.get("after_hours_count") or 0  # key may be present with a null value
 
     # Extract Connect goals from performance state
     goals = base.profile.get("profile", {}).get("goals", [])

@@ -76,3 +76,9 @@ def test_evidence_lake_legacy_write_when_not_enrolled(tmp_path, monkeypatch):
     target = tmp_path / "lake.md"
     evidence_lake._publish_atomic(target, "hello")
     assert target.read_text(encoding="utf-8") == "hello"
+
+
+def test_encode_never_produces_cr_cr_lf(monkeypatch):
+    monkeypatch.setattr(work_publication.os, "linesep", "\r\n")
+    assert work_publication.encode("a\r\nb\nc") == b"a\r\nb\r\nc"
+    assert b"\r\r" not in work_publication.encode("x\r\ny\r\n")
